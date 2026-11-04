@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
+import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbUp
@@ -35,6 +36,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -124,7 +129,7 @@ private fun ActionChip(icon: ImageVector, label: String, onClick: () -> Unit) {
     }
 }
 
-/** Like / dislike, Comments, Share, Save: the row of buttons under a YouTube video. */
+/** Like / dislike, Comments, Share, Save to phone, Save: the row of buttons under a YouTube video. */
 @Composable
 fun ActionRow(
     vm: AppViewModel,
@@ -135,53 +140,62 @@ fun ActionRow(
 ) {
     val reaction = meta?.reaction ?: Reaction.None
     val plain = MaterialTheme.colorScheme.onSurface
+    val info = (vm.playing?.info as? Load.Ready)?.data
+    var phoneOpen by remember { mutableStateOf(false) }
 
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        item {
-            Pill {
-                Row(
-                    Modifier
-                        .clickable { vm.react(Reaction.Liked) }
-                        .padding(start = 14.dp, end = 14.dp, top = 9.dp, bottom = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Rounded.ThumbUp,
-                        contentDescription = "Like",
-                        tint = if (reaction == Reaction.Liked) Accent else plain,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    meta?.likeCount?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.padding(start = 8.dp)
+    Column {
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item {
+                Pill {
+                    Row(
+                        Modifier
+                            .clickable { vm.react(Reaction.Liked) }
+                            .padding(start = 14.dp, end = 14.dp, top = 9.dp, bottom = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Rounded.ThumbUp,
+                            contentDescription = "Like",
+                            tint = if (reaction == Reaction.Liked) Accent else plain,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        meta?.likeCount?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+                    Box(Modifier.width(1.dp).height(20.dp).background(MaterialTheme.colorScheme.outline))
+                    Box(
+                        Modifier
+                            .clickable { vm.react(Reaction.Disliked) }
+                            .padding(horizontal = 14.dp, vertical = 9.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.ThumbDown,
+                            contentDescription = "Dislike",
+                            tint = if (reaction == Reaction.Disliked) Accent else plain,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
-                Box(Modifier.width(1.dp).height(20.dp).background(MaterialTheme.colorScheme.outline))
-                Box(
-                    Modifier
-                        .clickable { vm.react(Reaction.Disliked) }
-                        .padding(horizontal = 14.dp, vertical = 9.dp)
-                ) {
-                    Icon(
-                        Icons.Rounded.ThumbDown,
-                        contentDescription = "Dislike",
-                        tint = if (reaction == Reaction.Disliked) Accent else plain,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
             }
+            item {
+                ActionChip(Icons.Rounded.ChatBubbleOutline, vm.commentsTotal ?: meta?.commentCount ?: "Comments", onComments)
+            }
+            item { ActionChip(Icons.Rounded.Share, "Share", onShare) }
+            item { ActionChip(Icons.Rounded.SaveAlt, "Save to phone") { if (info != null) phoneOpen = true } }
+            item { ActionChip(Icons.Rounded.Bookmark, "Save", onSave) }
         }
-        item {
-            ActionChip(Icons.Rounded.ChatBubbleOutline, vm.commentsTotal ?: meta?.commentCount ?: "Comments", onComments)
+
+        if (phoneOpen && info != null) {
+            PhoneSaveSheet(info = info, onDismiss = { phoneOpen = false })
         }
-        item { ActionChip(Icons.Rounded.Share, "Share", onShare) }
-        item { ActionChip(Icons.Rounded.Bookmark, "Save", onSave) }
     }
 }
 
