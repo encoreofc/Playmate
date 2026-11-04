@@ -20,9 +20,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import android.widget.Toast
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.SaveAlt
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ThumbDown
@@ -36,7 +40,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -45,16 +51,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.playmate.app.AppViewModel
+import com.playmate.app.Tab
 import com.playmate.app.data.Load
+import com.playmate.app.data.OfflineStore
 import com.playmate.app.data.PlayableInfo
+import com.playmate.app.data.PlaybackPrefs
 import com.playmate.app.data.Reaction
+import com.playmate.app.data.SaveState
 import com.playmate.app.data.WatchMeta
+import com.playmate.app.data.activeDownload
 import com.playmate.app.ui.components.SubscribeButton
 import com.playmate.app.ui.theme.Accent
+import kotlinx.coroutines.delay
 
 /** Channel name, avatar and subscribe button, as under a video on YouTube. Tapping the channel opens it. */
 @Composable
@@ -117,19 +130,83 @@ private fun Pill(modifier: Modifier = Modifier, content: @Composable RowScope.()
 }
 
 @Composable
-private fun ActionChip(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun ActionChip(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
     Pill {
         Row(
             Modifier.clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = label, modifier = Modifier.size(20.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 8.dp))
+            Icon(
+                icon,
+                contentDescription = label,
+                tint = if (active) Accent else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (active) Accent else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(start = 8.dp)
+            )
         }
     }
 }
 
-/** Like / dislike, Comments, Share, Save to phone, Save: the row of buttons under a YouTube video. */
+/** Download: a ring with the percent while it downloads, a tick once it is saved in the app. */
+@Composable
+private fun DownloadChip(info: PlayableInfo?, onClick: () -> Unit) {
+    var tick by remember { mutableIntStateOf(0) }
+    val active = info?.let { activeDownload(it.url) }
+    LaunchedEffect(active) {
+        while (active != null) {
+            delay(500)
+            tick++
+        }
+    }
+    val percent = remember(tick, active) { active?.percent ?: 0 }
+    val saved = info?.let { OfflineStore.forUrl(it.url).isNotEmpty() } == true
+    val label = when {
+        active != null -> if (active.state == SaveState.Queued) "Waiting" else "$percent%"
+        saved -> "Downloaded"
+        else -> "Download"
+    }
+    val highlight = active != null || saved
+    Pill {
+        Row(
+            Modifier.clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            when {
+                active != null -> CircularProgressIndicator(
+                    progress = { percent / 100f },
+                    color = Accent,
+                    trackColor = MaterialTheme.colorScheme.outline,
+                    strokeWidth = 2.5.dp,
+                    modifier = Modifier.size(20.dp)
+                )
+                saved -> Icon(
+                    Icons.Rounded.DownloadDone,
+                    contentDescription = "Downloaded",
+                    tint = Accent,
+                    modifier = Modifier.size(20.dp)
+                )
+                else -> Icon(
+                    Icons.Rounded.Download,
+                    contentDescription = "Download",
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (highlight) Accent else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+    }
+}
+
+/** Like / dislike, Comments, Share, Background play, Download, Save to phone, Save: the row under a video. */
 @Composable
 fun ActionRow(
     vm: AppViewModel,
@@ -142,6 +219,11 @@ fun ActionRow(
     val plain = MaterialTheme.colorScheme.onSurface
     val info = (vm.playing?.info as? Load.Ready)?.data
     var phoneOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var background by remember { mutableStateOf(PlaybackPrefs.background(context)) }
+
+    // 0 = closed, 1 = pick a quality to download, 2 = this video's download status
+    var downloadSheet by remember { mutableIntStateOf(0) }
 
     Column {
         LazyRow(
@@ -186,15 +268,55 @@ fun ActionRow(
                 }
             }
             item {
-                ActionChip(Icons.Rounded.ChatBubbleOutline, vm.commentsTotal ?: meta?.commentCount ?: "Comments", onComments)
+                ActionChip(Icons.Rounded.ChatBubbleOutline, vm.commentsTotal ?: meta?.commentCount ?: "Comments", onClick = onComments)
             }
-            item { ActionChip(Icons.Rounded.Share, "Share", onShare) }
+            item { ActionChip(Icons.Rounded.Share, "Share", onClick = onShare) }
+            item {
+                ActionChip(Icons.Rounded.Headphones, "Background play", active = background) {
+                    background = !background
+                    PlaybackPrefs.setBackground(context, background)
+                    Toast.makeText(
+                        context,
+                        if (background) "Background play on" else "Background play off",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+            item {
+                DownloadChip(info) {
+                    if (info == null) {
+                        Toast.makeText(context, "This video is still loading.", Toast.LENGTH_SHORT).show()
+                    } else if (info.live) {
+                        Toast.makeText(context, "Live streams can't be downloaded.", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val busy = activeDownload(info.url) != null || OfflineStore.forUrl(info.url).isNotEmpty()
+                        downloadSheet = if (busy) 2 else 1
+                    }
+                }
+            }
             item { ActionChip(Icons.Rounded.SaveAlt, "Save to phone") { if (info != null) phoneOpen = true } }
-            item { ActionChip(Icons.Rounded.Bookmark, "Save", onSave) }
+            item { ActionChip(Icons.Rounded.Bookmark, "Save", onClick = onSave) }
         }
 
         if (phoneOpen && info != null) {
             PhoneSaveSheet(info = info, onDismiss = { phoneOpen = false })
+        }
+
+        if (info != null) {
+            if (downloadSheet == 1) {
+                DownloadSheet(info = info, onDismiss = { downloadSheet = 0 })
+            } else if (downloadSheet == 2) {
+                DownloadStateSheet(
+                    info = info,
+                    onAnother = { downloadSheet = 1 },
+                    onGoTo = {
+                        downloadSheet = 0
+                        vm.select(Tab.Downloads)
+                        vm.minimizePlayer()
+                    },
+                    onDismiss = { downloadSheet = 0 }
+                )
+            }
         }
     }
 }
