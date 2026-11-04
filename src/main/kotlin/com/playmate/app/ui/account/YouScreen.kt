@@ -2,6 +2,7 @@ package com.playmate.app.ui.account
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -17,10 +18,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
@@ -35,61 +39,81 @@ import com.playmate.app.ui.components.ErrorState
 import com.playmate.app.ui.components.SkeletonCard
 import com.playmate.app.ui.components.VideoRow
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YouScreen(vm: AppViewModel) {
     LaunchedEffect(vm.signedIn) {
         if (vm.signedIn) vm.loadHistory()
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-        item { AccountHeader(vm) }
+    PullToRefreshBox(
+        isRefreshing = vm.historyRefreshing,
+        onRefresh = { vm.loadHistory(force = true) },
+        modifier = Modifier.fillMaxSize()
+    ) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+            item { AccountHeader(vm) }
 
-        if (!vm.signedIn) {
-            item { SignInCard(onClick = vm::openLogin) }
-        } else {
-            item {
-                Text(
-                    "History",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                )
-            }
-            vm.trackingNote?.let { note ->
+            if (!vm.signedIn) {
+                item { SignInCard(onClick = vm::openLogin) }
+            } else {
                 item {
                     Text(
-                        "Last watch report didn't go through: $note",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+                        "History",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                     )
                 }
-            }
-            when (val h = vm.history) {
-                is Load.Loading -> items(3) { SkeletonCard() }
-                is Load.Failed -> item { ErrorState(h.message, onRetry = vm::loadHistory) }
-                is Load.Ready -> {
-                    if (h.data.isEmpty()) {
-                        item {
-                            Text(
-                                "Nothing here yet. Videos you watch show up in this list.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            )
-                        }
-                        vm.historyNote?.let { note ->
+                val trackingLine = vm.trackingNote?.let { "Last watch report didn't go through: $it" }
+                    ?: vm.trackingInfo
+                trackingLine?.let { line ->
+                    item {
+                        Text(
+                            line,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+                        )
+                    }
+                }
+                when (val h = vm.history) {
+                    is Load.Loading -> items(3) { SkeletonCard() }
+                    is Load.Failed -> item { ErrorState(h.message, onRetry = { vm.loadHistory() }) }
+                    is Load.Ready -> {
+                        if (h.data.isEmpty()) {
                             item {
                                 Text(
-                                    note,
-                                    style = MaterialTheme.typography.bodySmall,
+                                    "Nothing here yet. Videos you watch show up in this list.",
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                    modifier = Modifier.padding(horizontal = 16.dp)
                                 )
                             }
-                        }
-                    } else {
-                        items(h.data, key = { it.url }) { video ->
-                            VideoRow(video, onClick = { vm.open(video) })
+                            vm.historyNote?.let { note ->
+                                item {
+                                    Text(
+                                        note,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                    )
+                                }
+                            }
+                        } else {
+                            items(h.data, key = { it.url }) { video ->
+                                VideoRow(video, onClick = { vm.open(video) })
+                            }
+                            if (vm.historyToken != null) {
+                                item(key = "more") {
+                                    LaunchedEffect(vm.historyToken) { vm.loadMoreHistory() }
+                                    Box(
+                                        Modifier.fillMaxWidth().padding(16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
