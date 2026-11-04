@@ -9,7 +9,13 @@ import org.json.JSONObject
  * One page of a feed. [note] is only filled when the page came back without a single video:
  * it is a short, readable summary of what the server did send, so a blank feed can be explained.
  */
-class FeedPage(val items: List<VideoItem>, val token: String?, val note: String? = null)
+class FeedPage(
+    val items: List<VideoItem>,
+    val token: String?,
+    val note: String? = null,
+    /** True when the account itself has nothing to show (no watch history yet): not an error. */
+    val accountEmpty: Boolean = false
+)
 
 object FeedRepo {
     suspend fun home(): FeedPage = load("FEwhat_to_watch", "/")
@@ -38,6 +44,15 @@ object FeedRepo {
         if (api.isFailure && web.isFailure) {
             throw java.io.IOException("$apiNote | $webNote")
         }
+        // The server answered normally and says the account has nothing yet: a new feed
+        // ("Start watching videos...") or a history list with no entries.
+        val answer = "$apiNote | $webNote"
+        val noRecommendations = answer.contains("feedNudgeRenderer")
+        val noHistory = answer.contains("messageRenderer") && answer.contains("itemSectionRenderer")
+        if (InnerTube.sessionRecognised != false && (noRecommendations || noHistory)) {
+            return FeedPage(emptyList(), null, null, accountEmpty = true)
+        }
+
         val signIn = when (InnerTube.sessionRecognised) {
             true -> "signed in"
             false -> "NOT recognised as signed in"
