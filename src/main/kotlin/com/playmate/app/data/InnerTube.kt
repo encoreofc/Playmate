@@ -70,7 +70,8 @@ object InnerTube {
         return builder
     }
 
-    private fun post(endpoint: String, body: JSONObject): JSONObject {
+    /** A signed call to one of the site's own API endpoints, e.g. "next" or "like/like". */
+    internal fun post(endpoint: String, body: JSONObject): JSONObject {
         ensureConfig()
         body.put("context", context())
         return send(endpoint, body, UA, "1", clientVersion)
@@ -90,8 +91,15 @@ object InnerTube {
         visitorData?.let { builder.header("X-Goog-Visitor-Id", it) }
         val request = signed(builder).build()
         PmDownloader.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("YouTube answered ${response.code}")
-            val text = response.body?.string() ?: throw IOException("Empty answer from YouTube")
+            val text = response.body?.string()
+            if (!response.isSuccessful) {
+                // YouTube says why in {"error":{"message":...}}; keep that so a refusal is explainable.
+                val detail = runCatching {
+                    JSONObject(text.orEmpty()).optJSONObject("error")?.optString("message")
+                }.getOrNull()?.takeIf { it.isNotBlank() }?.take(140)
+                throw IOException("YouTube answered ${response.code}" + (detail?.let { ": $it" } ?: ""))
+            }
+            if (text.isNullOrBlank()) throw IOException("Empty answer from YouTube")
             return JSONObject(text)
         }
     }
@@ -192,8 +200,24 @@ object InnerTube {
 
     // ---------------------------------------------------------------- calls
 
-    suspend fun browse(browseId: String): JSONObject = withContext(Dispatchers.IO) {
-        post("browse", JSONObject().put("browseId", browseId))
+    /** [params] picks a tab of a channel page (it comes from that tab's own endpoint). */
+    suspend fun browse(browseId: String, params: String? = null): JSONObject = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("browseId", browseId)
+        if (!params.isNullOrBlank()) body.put("params", params)
+        post("browse", body)
+    }
+
+    /** The watch page's data for one video: reactions, channel, comment entry. */
+    suspend fun next(videoId: String): JSONObject = withContext(Dispatchers.IO) {
+        post(
+            "next",
+            JSONObject().put("videoId", videoId).put("contentCheckOk", true).put("racyCheckOk", true)
+        )
+    }
+
+    /** More of a watch-page section, e.g. a page of comments. */
+    suspend fun nextContinuation(token: String): JSONObject = withContext(Dispatchers.IO) {
+        post("next", JSONObject().put("continuation", token))
     }
 
     suspend fun continuation(token: String): JSONObject = withContext(Dispatchers.IO) {
