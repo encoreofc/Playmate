@@ -54,6 +54,16 @@ fun YouScreen(vm: AppViewModel) {
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                 )
             }
+            vm.trackingNote?.let { note ->
+                item {
+                    Text(
+                        "Last watch report didn't go through: $note",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+                    )
+                }
+            }
             when (val h = vm.history) {
                 is Load.Loading -> items(3) { SkeletonCard() }
                 is Load.Failed -> item { ErrorState(h.message, onRetry = vm::loadHistory) }
@@ -66,6 +76,16 @@ fun YouScreen(vm: AppViewModel) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
+                        }
+                        vm.historyNote?.let { note ->
+                            item {
+                                Text(
+                                    note,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                )
+                            }
                         }
                     } else {
                         items(h.data, key = { it.url }) { video ->
