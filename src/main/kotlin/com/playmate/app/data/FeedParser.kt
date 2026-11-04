@@ -14,7 +14,9 @@ class FeedPage(
     val token: String?,
     val note: String? = null,
     /** True when the account itself has nothing to show (no watch history yet): not an error. */
-    val accountEmpty: Boolean = false
+    val accountEmpty: Boolean = false,
+    /** The topic chips YouTube sent with this page (empty when it sent none). */
+    val chips: List<FeedChip> = emptyList()
 )
 
 object FeedRepo {
@@ -125,6 +127,7 @@ object FeedParser {
     fun parse(root: JSONObject): FeedPage {
         val found = LinkedHashMap<String, VideoItem>()
         var token: String? = null
+        val chips = ArrayList<FeedChip>()
 
         fun add(item: VideoItem?) {
             if (item != null && item.url !in found) found[item.url] = item
@@ -144,6 +147,7 @@ object FeedParser {
                             key == "lockupViewModel" && value is JSONObject -> add(lockup(value))
                             key == "shortsLockupViewModel" && value is JSONObject -> add(shortsLockup(value))
                             key == "reelItemRenderer" && value is JSONObject -> add(reelItem(value))
+                            key == "chipCloudChipRenderer" && value is JSONObject -> chip(value)?.let { chips += it }
                             key == "continuationItemRenderer" && value is JSONObject -> {
                                 if (token == null) {
                                     token = value.str("continuationEndpoint", "continuationCommand", "token")
@@ -159,8 +163,24 @@ object FeedParser {
 
         visit(root)
         val items = found.values.toList()
-        return FeedPage(items, token, if (items.isEmpty()) describe(root) else null)
+        return FeedPage(
+            items, token, if (items.isEmpty()) describe(root) else null,
+            chips = chips.distinctBy { it.label }
+        )
     }
+
+    /** One real topic chip. Chips that lead nowhere (no continuation, not selected) are dropped. */
+    private fun chip(o: JSONObject): FeedChip? {
+        val label = text(o.optJSONObject("text")).trim()
+        if (label.isBlank()) return null
+        val token = findObject(o, "continuationCommand")?.optString("token")?.ifBlank { null }
+        val selected = o.optBoolean("isSelected")
+        if (token == null && !selected) return null
+        return FeedChip(label, token, selected)
+    }
+
+    private fun firstUrl(sources: JSONArray?): String? =
+        sources?.optJSONObject(0)?.optString("url")?.takeIf { it.isNotBlank() }
 
     /**
      * A short summary of what an answer contains, e.g.
@@ -247,7 +267,11 @@ object FeedParser {
             views = count(viewsText),
             thumb = thumb,
             uploaded = text(o.optJSONObject("publishedTimeText")).ifBlank { null },
-            live = live
+            live = live,
+            avatar = firstUrl(
+                findObject(o, "channelThumbnailWithLinkRenderer")
+                    ?.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+            )
         )
     }
 
@@ -302,7 +326,8 @@ object FeedParser {
             views = count(viewsText),
             thumb = thumb,
             uploaded = published,
-            live = live
+            live = live,
+            avatar = firstUrl(findObject(meta, "avatarViewModel")?.optJSONObject("image")?.optJSONArray("sources"))
         )
     }
 
