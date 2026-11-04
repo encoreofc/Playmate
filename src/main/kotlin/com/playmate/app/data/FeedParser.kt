@@ -154,6 +154,7 @@ object FeedParser {
      */
     fun describe(root: JSONObject): String {
         val counts = LinkedHashMap<String, Int>()
+        val texts = LinkedHashSet<String>()
 
         fun walk(node: Any?) {
             when (node) {
@@ -166,18 +167,29 @@ object FeedParser {
                         }
                         walk(node.opt(k))
                     }
+                    if (texts.size < 4 && (node.has("simpleText") || node.has("runs"))) {
+                        val line = text(node).trim()
+                        if (line.isNotBlank()) texts += line.take(90)
+                    }
                 }
                 is JSONArray -> for (i in 0 until node.length()) walk(node.opt(i))
             }
         }
 
-        walk(root)
+        // Only the feed body: the page shell (menus, shortcuts, top bar) is the same for every answer.
+        val body: Any = root.opt("contents") ?: root
+        walk(body)
         val top = counts.entries
             .sortedByDescending { it.value }
-            .take(8)
+            .take(10)
             .joinToString(" ") { "${it.key}=${it.value}" }
-        val keys = root.keys().asSequence().take(6).joinToString(",")
-        return "keys: $keys; seen: ${top.ifBlank { "nothing" }}"
+        val tab = findObject(body, "tabRenderer")?.keys()?.asSequence()?.take(8)?.joinToString(",")
+        return buildString {
+            append("keys: ").append(root.keys().asSequence().take(6).joinToString(","))
+            append("; seen: ").append(top.ifBlank { "nothing" })
+            if (tab != null) append("; tab: ").append(tab)
+            if (texts.isNotEmpty()) append("; text: ").append(texts.joinToString(" / ") { "\"$it\"" })
+        }
     }
 
     // ---- classic cards (videoRenderer & friends) ----
