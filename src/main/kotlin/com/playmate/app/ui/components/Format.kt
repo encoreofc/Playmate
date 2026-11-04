@@ -35,7 +35,7 @@ fun metaLine(channel: String, views: Long, uploaded: String?): String =
         channel.takeIf { it.isNotBlank() },
         formatCount(views)?.let { "$it views" },
         uploaded?.takeIf { it.isNotBlank() }
-    ).joinToString("  ·  ")
+    ).joinToString(" · ")
 
 fun VideoItem.meta() = metaLine(channel, views, uploaded)
 
