@@ -6,6 +6,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
@@ -66,6 +67,12 @@ fun defaultQualityIndex(info: PlayableInfo): Int {
 }
 
 fun buildSource(info: PlayableInfo, qualityIndex: Int): MediaSource? {
+    // A download kept inside the app: play the file from the phone.
+    info.localUri?.let { local ->
+        return ProgressiveMediaSource.Factory(FileDataSource.Factory())
+            .createMediaSource(mediaItemFor(info, local))
+    }
+
     val http = OkHttpDataSource.Factory(PmDownloader.client)
         .setUserAgent(PmDownloader.USER_AGENT)
 
