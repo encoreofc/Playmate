@@ -11,8 +11,16 @@ data class VideoItem(
     val views: Long,
     val thumb: String?,
     val uploaded: String?,
-    val live: Boolean = false
-)
+    val live: Boolean = false,
+    /** Round channel picture shown next to the title, when the feed carries one. */
+    val avatar: String? = null
+) {
+    /** Short-form video (vertical): shown in the Shorts shelf, not as a normal card. */
+    val isShort: Boolean get() = url.contains("/shorts/")
+}
+
+/** A real topic chip from YouTube's own home feed (All, Music, ...). [token] loads that topic. */
+data class FeedChip(val label: String, val token: String?, val selected: Boolean)
 
 class Quality(
     val label: String,
