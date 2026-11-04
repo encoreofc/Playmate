@@ -13,6 +13,7 @@ import com.playmate.app.data.ChannelInfo
 import com.playmate.app.data.ChannelRepo
 import com.playmate.app.data.CommentItem
 import com.playmate.app.data.Engage
+import com.playmate.app.data.FeedChip
 import com.playmate.app.data.FeedPage
 import com.playmate.app.data.FeedRepo
 import com.playmate.app.data.InnerTube
@@ -74,6 +75,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var feed by mutableStateOf<Load<List<VideoItem>>>(Load.Loading); private set
     var feedToken by mutableStateOf<String?>(null); private set
     var feedNote by mutableStateOf<String?>(null); private set
+    var feedChips by mutableStateOf<List<FeedChip>>(emptyList()); private set
+    var selectedChip by mutableStateOf(0); private set
     var refreshing by mutableStateOf(false); private set
 
     var query by mutableStateOf(""); private set
@@ -136,6 +139,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var loadingMoreFeed = false
     private var loadingMoreHistory = false
     private var feedGeneration = 0
+    private var defaultChip = 0
 
     init {
         Session.init(app)
@@ -176,6 +180,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ?.takeIf { it.items.isNotEmpty() }
             } else null
 
+            feedChips = personal?.chips.orEmpty()
+            defaultChip = feedChips.indexOfFirst { it.selected }.coerceAtLeast(0)
+            selectedChip = defaultChip
+
             val result = if (personal != null) {
                 // Videos not shown before come first; if the page is mostly repeats, more pages are pulled.
                 val page = freshen(personal, known = emptySet(), dropSeen = false)
@@ -202,6 +210,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (!(force && feed is Load.Ready)) feed = Load.Failed(friendly(it))
                 }
             refreshing = false
+        }
+    }
+
+    /** Tap on one of YouTube's own topic chips: the feed becomes that topic. The first chip is the normal feed. */
+    fun selectChip(index: Int) {
+        val chip = feedChips.getOrNull(index) ?: return
+        if (index == selectedChip) return
+        val chipToken = chip.token
+        if (index == defaultChip || chipToken == null) {
+            loadFeed(force = true)
+            return
+        }
+        feedJob?.cancel()
+        feedGeneration++
+        selectedChip = index
+        feedNote = null
+        feedToken = null
+        feed = Load.Loading
+        feedJob = viewModelScope.launch {
+            attempt { FeedRepo.more(chipToken) }
+                .onSuccess { page ->
+                    feedToken = page.token
+                    feed = if (page.items.isEmpty()) Load.Failed("Nothing to show for \"${chip.label}\" right now.")
+                    else Load.Ready(page.items)
+                }
+                .onFailure { feed = Load.Failed(friendly(it)) }
         }
     }
 
