@@ -47,6 +47,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handle(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_OPEN_DOWNLOADS, false) == true) {
+            if (vm.playing != null) vm.minimizePlayer()
+            vm.select(Tab.Downloads)
+            return
+        }
         val link = when (intent?.action) {
             Intent.ACTION_VIEW -> intent.dataString
             Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
@@ -54,5 +59,9 @@ class MainActivity : ComponentActivity() {
             else -> null
         }
         if (!link.isNullOrBlank()) vm.openUrl(link)
+    }
+
+    companion object {
+        const val EXTRA_OPEN_DOWNLOADS = "com.playmate.app.OPEN_DOWNLOADS"
     }
 }
