@@ -102,7 +102,10 @@ object YouTubeRepo {
             hlsUrl = info.hlsUrl?.takeIf { it.isNotBlank() },
             qualities = qualities,
             audioOnly = bestM4a ?: bestAny,
-            related = info.relatedItems.toVideos()
+            related = info.relatedItems.toVideos(),
+            channelId = Regex("/channel/(UC[A-Za-z0-9_-]{22})").find(info.uploaderUrl.orEmpty())
+                ?.groupValues?.get(1),
+            channelAvatar = info.uploaderAvatars.pick()
         )
     }
 
