@@ -12,8 +12,8 @@ android {
         applicationId = "com.playmate.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     // A stable signing key keeps every build installable over the previous one.
@@ -95,6 +95,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
+    implementation("androidx.media3:media3-session:1.5.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.5.1")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
