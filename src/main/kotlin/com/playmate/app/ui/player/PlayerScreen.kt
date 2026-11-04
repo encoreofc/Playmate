@@ -107,6 +107,7 @@ private val Speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 @Composable
 fun PlayerScreen(
     playing: Playing,
+    expanded: Boolean = true,
     onClose: () -> Unit,
     onOpen: (VideoItem) -> Unit,
     onRetry: () -> Unit
@@ -252,12 +253,15 @@ fun PlayerScreen(
         }
     }
 
+    // Background and mini-player: audio keeps playing, only the video track is switched off.
+    var started by remember { mutableStateOf(true) }
+    LaunchedEffect(expanded, started) { player.setVideoEnabled(expanded && started) }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            // Keep playing in the background: only the video track is switched off.
-            if (event == Lifecycle.Event.ON_STOP) player.setVideoEnabled(false)
-            if (event == Lifecycle.Event.ON_START) player.setVideoEnabled(true)
+            if (event == Lifecycle.Event.ON_STOP) started = false
+            if (event == Lifecycle.Event.ON_START) started = true
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -302,7 +306,7 @@ fun PlayerScreen(
             else ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
     }
 
-    BackHandler {
+    BackHandler(enabled = expanded) {
         if (fullscreen) toggleFullscreen() else onClose()
     }
 
@@ -337,7 +341,7 @@ fun PlayerScreen(
                             this.player = engine
                         }
                     },
-                    update = { it.keepScreenOn = isPlaying },
+                    update = { it.keepScreenOn = isPlaying && expanded },
                     modifier = Modifier.fillMaxSize()
                 )
 
