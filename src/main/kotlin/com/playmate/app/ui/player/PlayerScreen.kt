@@ -263,7 +263,11 @@ fun PlayerScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) started = false
+            if (event == Lifecycle.Event.ON_STOP) {
+                started = false
+                // Background play switched off: leaving the app pauses the video.
+                if (!com.playmate.app.data.PlaybackPrefs.background(context)) player.pause()
+            }
             if (event == Lifecycle.Event.ON_START) started = true
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -667,6 +671,13 @@ private fun Details(
     onSave: () -> Unit
 ) {
     var expanded by remember(playing.seed.url) { mutableStateOf(false) }
+
+    // A download kept inside the app: its own page, nothing here needs internet.
+    val offline = info
+    if (offline != null && offline.localUri != null) {
+        OfflineDetails(info = offline, vm = vm)
+        return
+    }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         when (val state = playing.info) {
