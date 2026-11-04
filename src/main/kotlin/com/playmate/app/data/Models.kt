@@ -35,7 +35,8 @@ class PlayableInfo(
     val audioOnly: AudioStream?,
     val related: List<VideoItem>,
     val channelId: String? = null,
-    val channelAvatar: String? = null
+    val channelAvatar: String? = null,
+    val audios: List<AudioStream> = emptyList()
 )
 
 class SearchPage(
