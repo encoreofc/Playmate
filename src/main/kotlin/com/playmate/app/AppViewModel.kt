@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.Player
 import com.playmate.app.data.Account
 import com.playmate.app.data.FeedPage
 import com.playmate.app.data.FeedRepo
@@ -14,6 +15,7 @@ import com.playmate.app.data.Load
 import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.Playing
 import com.playmate.app.data.RecentSearches
+import com.playmate.app.data.SeenStore
 import com.playmate.app.data.SearchPage
 import com.playmate.app.data.Session
 import com.playmate.app.data.VideoItem
@@ -21,15 +23,20 @@ import com.playmate.app.data.YouTubeRepo
 import com.playmate.app.data.attempt
 import com.playmate.app.data.friendly
 import com.playmate.app.data.videoIdOf
+import com.playmate.app.ui.player.PlayerHolder
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class Tab { Home, Search, You }
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val recentStore = RecentSearches(app)
+    private val seen = SeenStore(app)
 
     var tab by mutableStateOf(Tab.Home); private set
 
@@ -50,7 +57,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var showLogin by mutableStateOf(false); private set
     var history by mutableStateOf<Load<List<VideoItem>>>(Load.Loading); private set
     var historyNote by mutableStateOf<String?>(null); private set
+    var historyToken by mutableStateOf<String?>(null); private set
+    var historyRefreshing by mutableStateOf(false); private set
     var trackingNote by mutableStateOf<String?>(null); private set
+    var trackingInfo by mutableStateOf<String?>(null); private set
 
     var playing by mutableStateOf<Playing?>(null); private set
     var playerExpanded by mutableStateOf(true); private set
@@ -60,7 +70,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var searchJob: Job? = null
     private var playJob: Job? = null
     private var historyJob: Job? = null
+    private var watchJob: Job? = null
+    private var seenSaveJob: Job? = null
+    private var watch: InnerTube.WatchSession? = null
     private var loadingMoreFeed = false
+    private var loadingMoreHistory = false
+    private var feedGeneration = 0
 
     init {
         Session.init(app)
@@ -78,6 +93,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadFeed(force: Boolean = false) {
         if (!force && feed is Load.Ready) return
         feedJob?.cancel()
+        feedGeneration++
         feedJob = viewModelScope.launch {
             if (force) refreshing = true else feed = Load.Loading
             feedNote = null
@@ -100,8 +116,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } else null
 
             val result = if (personal != null) {
-                token = personal.token
-                Result.success(personal.items)
+                // Videos not shown before come first; if the page is mostly repeats, more pages are pulled.
+                val page = freshen(personal, known = emptySet(), dropSeen = false)
+                token = page.token
+                Result.success(page.items)
             } else {
                 if (Session.loggedIn) {
                     feedNote = if (accountEmpty) {
@@ -131,15 +149,57 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val current = (feed as? Load.Ready)?.data ?: return
         if (loadingMoreFeed) return
         loadingMoreFeed = true
+        val generation = feedGeneration
         viewModelScope.launch {
-            attempt { FeedRepo.more(token) }
+            attempt {
+                freshen(FeedRepo.more(token), known = current.map { it.url }.toHashSet(), dropSeen = true)
+            }
                 .onSuccess { page ->
-                    val known = current.map { it.url }.toHashSet()
-                    feed = Load.Ready(current + page.items.filter { it.url !in known })
-                    feedToken = page.token
+                    // A refresh that started meanwhile owns the list now.
+                    if (generation == feedGeneration) {
+                        val latest = (feed as? Load.Ready)?.data ?: current
+                        val known = latest.map { it.url }.toHashSet()
+                        feed = Load.Ready(latest + page.items.filter { it.url !in known })
+                        feedToken = page.token
+                    }
                 }
-                .onFailure { feedToken = null }
+                .onFailure { if (generation == feedGeneration) feedToken = null }
             loadingMoreFeed = false
+        }
+    }
+
+    /**
+     * Orders a feed page so videos not shown before come first. When the page holds fewer than a
+     * handful of new videos, the next pages are fetched too (up to three). With [dropSeen] the
+     * repeats are left out as long as there is anything new.
+     */
+    private suspend fun freshen(first: FeedPage, known: Set<String>, dropSeen: Boolean): FeedPage {
+        val all = LinkedHashMap<String, VideoItem>()
+        fun take(items: List<VideoItem>) {
+            for (v in items) if (v.url !in known && v.url !in all) all[v.url] = v
+        }
+        take(first.items)
+        var token = first.token
+        var hops = 0
+        while (all.values.count { !seen.has(it.url) } < MIN_FRESH && token != null && hops < 3) {
+            val next = attempt { FeedRepo.more(token!!) }.getOrNull() ?: break
+            take(next.items)
+            token = next.token
+            hops++
+        }
+        val unseen = all.values.filter { !seen.has(it.url) }
+        val repeats = all.values.filter { seen.has(it.url) }
+        val items = if (dropSeen && unseen.isNotEmpty()) unseen else unseen + repeats
+        return FeedPage(items, token)
+    }
+
+    /** A video card was actually shown on Home: remember it, so the next refresh leads with other videos. */
+    fun onImpression(url: String) {
+        if (!seen.add(url)) return
+        seenSaveJob?.cancel()
+        seenSaveJob = viewModelScope.launch {
+            delay(2_000)
+            withContext(Dispatchers.IO) { seen.save() }
         }
     }
 
@@ -168,8 +228,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         Session.clear()
         signedIn = false
         account = null
+        finishWatch()
         historyNote = null
+        historyToken = null
         trackingNote = null
+        trackingInfo = null
         history = Load.Ready(emptyList())
         feed = Load.Loading
         loadFeed()
@@ -181,14 +244,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun loadHistory() {
+    /** [force]: a pull-to-refresh. The list stays on screen while the new one loads. */
+    fun loadHistory(force: Boolean = false) {
         if (!Session.loggedIn) return
         historyJob?.cancel()
         historyJob = viewModelScope.launch {
-            if (history !is Load.Ready) history = Load.Loading
+            if (force) historyRefreshing = true
+            else if (history !is Load.Ready) history = Load.Loading
             attempt { FeedRepo.history() }
                 .onSuccess {
                     history = Load.Ready(it.items)
+                    historyToken = it.token
                     historyNote = if (it.items.isEmpty()) it.note else null
                 }
                 .onFailure {
@@ -196,6 +262,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         history = Load.Failed(friendly(it) + (it.message?.let { m -> " ($m)" } ?: ""))
                     }
                 }
+            historyRefreshing = false
+        }
+    }
+
+    fun loadMoreHistory() {
+        val token = historyToken ?: return
+        val current = (history as? Load.Ready)?.data ?: return
+        if (loadingMoreHistory || historyRefreshing) return
+        loadingMoreHistory = true
+        viewModelScope.launch {
+            attempt { FeedRepo.more(token) }
+                .onSuccess { page ->
+                    val latest = (history as? Load.Ready)?.data ?: current
+                    val known = latest.map { it.url }.toHashSet()
+                    history = Load.Ready(latest + page.items.filter { it.url !in known })
+                    historyToken = page.token
+                }
+                .onFailure { historyToken = null }
+            loadingMoreHistory = false
         }
     }
 
@@ -270,6 +355,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- player
 
     fun open(item: VideoItem) {
+        finishWatch()
         playerExpanded = true
         playing = Playing(item, Load.Loading)
         playJob?.cancel()
@@ -278,14 +364,56 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 .fold({ Load.Ready(it) }, { Load.Failed(friendly(it)) })
             playing = playing?.takeIf { it.seed.url == item.url }?.copy(info = outcome)
 
-            // Signed in: tell YouTube it was watched, so it shows up in history and recommendations.
+            // Signed in: tell YouTube it is being watched, so it shows up in history and recommendations.
             if (outcome is Load.Ready && Session.loggedIn) {
-                videoIdOf(item.url)?.let { id ->
-                    attempt { InnerTube.registerPlayback(id) }
-                        .onSuccess { trackingNote = null }
+                videoIdOf(item.url)?.let { beginWatch(it, item.url) }
+            }
+        }
+    }
+
+    /**
+     * Reports the watch to YouTube: a start report now, then the real playback position every
+     * ten seconds while the video plays (also in the mini player and in the background).
+     */
+    private fun beginWatch(videoId: String, url: String) {
+        watchJob?.cancel()
+        watchJob = viewModelScope.launch {
+            val session = attempt { InnerTube.beginWatch(videoId) }.getOrElse {
+                trackingNote = it.message ?: "unknown error"
+                trackingInfo = null
+                return@launch
+            }
+            watch = session
+            trackingNote = null
+            trackingInfo = "Watch history: reporting to YouTube (via ${session.source})."
+
+            val player = PlayerHolder.get(getApplication())
+            delay(5_000)
+            while (isActive && playing?.seed?.url == url) {
+                val ended = player.playbackState == Player.STATE_ENDED
+                if (player.isPlaying || ended) {
+                    val position = player.currentPosition / 1000.0
+                    attempt { session.progress(position, playing = !ended, final = ended) }
                         .onFailure { trackingNote = it.message ?: "unknown error" }
                 }
+                if (ended) {
+                    watch = null
+                    break
+                }
+                delay(10_000)
             }
+        }
+    }
+
+    /** Sends the closing report for the video that was being watched. */
+    private fun finishWatch() {
+        watchJob?.cancel()
+        watchJob = null
+        val session = watch ?: return
+        watch = null
+        val position = PlayerHolder.get(getApplication()).currentPosition / 1000.0
+        viewModelScope.launch {
+            attempt { session.progress(position, playing = false, final = true) }
         }
     }
 
@@ -307,6 +435,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closePlayer() {
+        finishWatch()
         playJob?.cancel()
         playing = null
         playerExpanded = true
@@ -314,4 +443,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun looksLikeYouTubeLink(text: String) =
         Regex("^https?://(www\\.|m\\.|music\\.)?(youtube\\.com|youtu\\.be)/\\S+$").matches(text)
+
+    private companion object {
+        const val MIN_FRESH = 6
+    }
 }
