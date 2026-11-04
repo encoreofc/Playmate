@@ -1,6 +1,7 @@
 package com.playmate.app.ui.player
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.media.AudioManager
@@ -85,6 +86,7 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.playmate.app.PlaybackService
 import com.playmate.app.data.Load
 import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.Playing
@@ -111,7 +113,7 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
-    val player = remember { createPlayer(context) }
+    val player = remember { PlayerHolder.get(context) }
     val fullscreen = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val info: PlayableInfo? = (playing.info as? Load.Ready)?.data
 
@@ -232,8 +234,13 @@ fun PlayerScreen(
     }
 
     DisposableEffect(Unit) {
+        val serviceIntent = Intent(context, PlaybackService::class.java)
+        runCatching { context.startService(serviceIntent) }
         onDispose {
-            player.release()
+            player.stop()
+            player.clearMediaItems()
+            player.setVideoEnabled(true)
+            runCatching { context.stopService(serviceIntent) }
             activity?.let {
                 it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 val attrs = it.window.attributes
@@ -248,7 +255,9 @@ fun PlayerScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) player.pause()
+            // Keep playing in the background: only the video track is switched off.
+            if (event == Lifecycle.Event.ON_STOP) player.setVideoEnabled(false)
+            if (event == Lifecycle.Event.ON_START) player.setVideoEnabled(true)
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
