@@ -33,7 +33,9 @@ class PlayableInfo(
     val hlsUrl: String?,
     val qualities: List<Quality>,
     val audioOnly: AudioStream?,
-    val related: List<VideoItem>
+    val related: List<VideoItem>,
+    val channelId: String? = null,
+    val channelAvatar: String? = null
 )
 
 class SearchPage(
