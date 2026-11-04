@@ -73,14 +73,19 @@ object InnerTube {
     private fun post(endpoint: String, body: JSONObject): JSONObject {
         ensureConfig()
         body.put("context", context())
+        return send(endpoint, body, UA, "1", clientVersion)
+    }
+
+    /** One signed API call; [clientId] / [version] say which YouTube client this pretends to be. */
+    private fun send(endpoint: String, body: JSONObject, ua: String, clientId: String, version: String): JSONObject {
         val builder = Request.Builder()
             .url("$ORIGIN/youtubei/v1/$endpoint?prettyPrint=false&key=$apiKey")
             .post(body.toString().toRequestBody(JSON_TYPE))
-            .header("User-Agent", UA)
+            .header("User-Agent", ua)
             .header("Origin", ORIGIN)
             .header("X-Origin", ORIGIN)
-            .header("X-Youtube-Client-Name", "1")
-            .header("X-Youtube-Client-Version", clientVersion)
+            .header("X-Youtube-Client-Name", clientId)
+            .header("X-Youtube-Client-Version", version)
             .header("Accept-Language", "en-US,en;q=0.9")
         visitorData?.let { builder.header("X-Goog-Visitor-Id", it) }
         val request = signed(builder).build()
@@ -140,8 +145,12 @@ object InnerTube {
         Regex("\"$key\":\\s*\"([^\"]+)\"").find(html)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
 
     /** The JSON object the page embeds as its initial data. */
-    private fun embeddedData(html: String): JSONObject? {
-        for (marker in listOf("var ytInitialData = ", "window[\"ytInitialData\"] = ", "ytInitialData = ")) {
+    private fun embeddedData(html: String): JSONObject? = embedded(
+        html, listOf("var ytInitialData = ", "window[\"ytInitialData\"] = ", "ytInitialData = ")
+    )
+
+    private fun embedded(html: String, markers: List<String>): JSONObject? {
+        for (marker in markers) {
             val at = html.indexOf(marker)
             if (at < 0) continue
             val start = at + marker.length
@@ -202,64 +211,183 @@ object InnerTube {
         Account(name, handle, avatar)
     }
 
-    /**
-     * Tells YouTube this video was watched, so it lands in the account's watch history
-     * and feeds the recommendations. Two reports are sent, the way the site's own player
-     * does: the playback start and the watch-time report (the one that creates the history
-     * entry). Throws when YouTube gives no report link or refuses it, so the caller can say why.
-     */
-    suspend fun registerPlayback(videoId: String) = withContext(Dispatchers.IO) {
-        val player = post(
-            "player",
-            JSONObject().put("videoId", videoId).put("contentCheckOk", true).put("racyCheckOk", true)
-        )
-        val tracking = player.optJSONObject("playbackTracking")
-        val start = tracking?.optJSONObject("videostatsPlaybackUrl")
-            ?.optString("baseUrl")?.takeIf { it.isNotBlank() }
-        val watchTime = tracking?.optJSONObject("videostatsWatchtimeUrl")
-            ?.optString("baseUrl")?.takeIf { it.isNotBlank() }
 
-        if (start == null && watchTime == null) {
-            val status = player.optJSONObject("playabilityStatus")?.optString("status").orEmpty()
-            throw IOException("no watch-report link (player status ${status.ifBlank { "unknown" }})")
-        }
-        start?.let { report(it, withWatchTime = false) }
-        watchTime?.let { report(it, withWatchTime = true) }
+    // ---------------------------------------------------------------- watch history
+
+    private const val MOBILE_ORIGIN = "https://m.youtube.com"
+    private const val MOBILE_UA =
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/131.0.0.0 Mobile Safari/537.36"
+    private const val TV_UA = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version"
+    private const val TV_VERSION = "7.20250219.14.00"
+
+    /** The watch-report links YouTube hands out for one video, and where they came from. */
+    class WatchTracking(
+        val source: String,
+        val playbackUrl: String?,
+        val watchtimeUrl: String?,
+        val lengthSec: Double?
+    )
+
+    private fun trackingOf(player: JSONObject?, source: String): WatchTracking? {
+        val tracking = player?.optJSONObject("playbackTracking") ?: return null
+        val start = tracking.optJSONObject("videostatsPlaybackUrl")
+            ?.optString("baseUrl")?.takeIf { it.isNotBlank() }
+        val watch = tracking.optJSONObject("videostatsWatchtimeUrl")
+            ?.optString("baseUrl")?.takeIf { it.isNotBlank() }
+        if (start == null && watch == null) return null
+        val length = player.optJSONObject("videoDetails")?.optString("lengthSeconds")?.toDoubleOrNull()
+        return WatchTracking(source, start, watch, length)
     }
 
-    /** A few seconds in: what the site's player reports shortly after a video starts. */
-    private const val FIRST_REPORT_SECONDS = 3.0
-
-    private fun report(base: String, withWatchTime: Boolean) {
-        val url = base.toHttpUrlOrNull() ?: throw IOException("unreadable watch-report link")
-        val length = url.queryParameter("len")?.toDoubleOrNull()
-        val seconds = if (length != null && length > 1.0) {
-            minOf(FIRST_REPORT_SECONDS, length - 0.5)
-        } else {
-            FIRST_REPORT_SECONDS
+    /** The player data embedded in the site's own watch page (what a browser tab receives). */
+    private fun watchPagePlayer(origin: String, ua: String, videoId: String): JSONObject {
+        val builder = Request.Builder()
+            .url("$origin/watch?v=$videoId&bpctr=9999999999&has_verified=1")
+            .header("User-Agent", ua)
+            .header("Accept", "text/html,application/xhtml+xml")
+            .header("Accept-Language", "en-US,en;q=0.9")
+        if (Session.cookie.isNotBlank()) builder.header("Cookie", Session.cookie)
+        val html = PmDownloader.client.newCall(builder.build()).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("page answered ${response.code}")
+            response.body?.string() ?: throw IOException("empty page")
         }
-        val position = seconds.toString()
+        return embedded(html, listOf("var ytInitialPlayerResponse = ", "ytInitialPlayerResponse = "))
+            ?: throw IOException("page had no player data")
+    }
 
-        val builder = url.newBuilder()
-            .setQueryParameter("ver", "2")
-            .setQueryParameter("cpn", randomCpn())
-            .setQueryParameter("cmt", position)
-            .setQueryParameter("el", "detailpage")
-        if (url.queryParameter("c") == null) builder.setQueryParameter("c", "WEB")
-        if (withWatchTime) {
-            builder.setQueryParameter("st", "0").setQueryParameter("et", position)
+    private fun playerBody(videoId: String) =
+        JSONObject().put("videoId", videoId).put("contentCheckOk", true).put("racyCheckOk", true)
+
+    /** The same player call the YouTube TV app makes (it accepts the signed-in cookies). */
+    private fun tvPlayer(videoId: String): JSONObject {
+        ensureConfig()
+        val client = JSONObject()
+            .put("clientName", "TVHTML5")
+            .put("clientVersion", TV_VERSION)
+            .put("hl", "en")
+            .put("gl", "BD")
+            .put("userAgent", TV_UA)
+        visitorData?.let { client.put("visitorData", it) }
+        val body = playerBody(videoId).put(
+            "context",
+            JSONObject().put("client", client).put("user", JSONObject().put("lockedSafetyMode", false))
+        )
+        return send("player", body, TV_UA, "7", TV_VERSION)
+    }
+
+    private fun webPlayer(videoId: String): JSONObject = post("player", playerBody(videoId))
+
+    /**
+     * Finds the watch-report links for [videoId]. The site's own watch page goes first (it needs
+     * no extra proof from the app); the API clients follow. The first source that has the links wins.
+     * If none does, the error lists what each one said, so the cause is visible on screen.
+     */
+    private fun findTracking(videoId: String): WatchTracking {
+        val tried = mutableListOf<String>()
+        val sources: List<Pair<String, () -> JSONObject>> = listOf(
+            "watch page" to { watchPagePlayer(ORIGIN, UA, videoId) },
+            "mobile page" to { watchPagePlayer(MOBILE_ORIGIN, MOBILE_UA, videoId) },
+            "tv api" to { tvPlayer(videoId) },
+            "web api" to { webPlayer(videoId) }
+        )
+        for ((name, fetch) in sources) {
+            val answer = attempt { fetch() }
+            val player = answer.getOrNull()
+            if (player == null) {
+                tried += "$name: ${answer.exceptionOrNull()?.message ?: "failed"}"
+                continue
+            }
+            trackingOf(player, name)?.let { return it }
+            val status = player.optJSONObject("playabilityStatus")?.optString("status").orEmpty()
+            tried += "$name: ${status.ifBlank { "no status" }}"
+        }
+        throw IOException("no watch-report link (${tried.joinToString("; ")})")
+    }
+
+    /**
+     * Starts reporting a watch to YouTube so it lands in the account's history and feeds the
+     * recommendations, the way the site's own player does: one playback-start report now, then
+     * watch-time reports as the video really plays (see [WatchSession.progress]).
+     */
+    suspend fun beginWatch(videoId: String): WatchSession = withContext(Dispatchers.IO) {
+        val tracking = findTracking(videoId)
+        WatchSession(tracking, randomCpn()).also { it.sendStart() }
+    }
+
+    /** One video being watched. Reports use one playback id ([cpn]), as the site's player does. */
+    class WatchSession internal constructor(
+        private val tracking: WatchTracking,
+        private val cpn: String
+    ) {
+        val source: String get() = tracking.source
+
+        private val startedAt = System.nanoTime()
+        private var lastWall = startedAt
+        private var lastEnd = 0.0
+
+        private val length: Double?
+            get() = tracking.lengthSec
+                ?: (tracking.watchtimeUrl ?: tracking.playbackUrl)?.toHttpUrlOrNull()
+                    ?.queryParameter("len")?.toDoubleOrNull()
+
+        internal fun sendStart() {
+            val base = tracking.playbackUrl ?: return
+            ping(base, position = 0.0, from = null, playing = true, final = false)
         }
 
-        val request = signed(
-            Request.Builder()
-                .url(builder.build())
-                .header("User-Agent", UA)
-                .header("Origin", ORIGIN)
-                .header("X-Origin", ORIGIN)
-        ).build()
-        PmDownloader.client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("watch report answered ${response.code}")
+        /**
+         * Reports how far the video has really been watched. Call every few seconds while it
+         * plays, and once more with [final] when it is closed. A jump in position (a seek) is
+         * not counted as watched time.
+         */
+        suspend fun progress(position: Double, playing: Boolean, final: Boolean) =
+            withContext(Dispatchers.IO) {
+                val now = System.nanoTime()
+                val wall = (now - lastWall) / 1e9
+                val limit = length
+                val pos = if (limit != null && limit > 0) position.coerceIn(0.0, limit) else position.coerceAtLeast(0.0)
+                val moved = pos - lastEnd
+                val sought = moved < 0 || moved > wall * 2.5 + 2.0
+                val from = if (sought) pos else lastEnd
+                lastEnd = pos
+                lastWall = now
+                if (!final && (sought || pos <= from)) return@withContext
+                val base = tracking.watchtimeUrl ?: return@withContext
+                ping(base, position = pos, from = from, playing = playing, final = final)
+            }
+
+        private fun ping(base: String, position: Double, from: Double?, playing: Boolean, final: Boolean) {
+            val url = base.toHttpUrlOrNull() ?: throw IOException("unreadable watch-report link")
+            val builder = url.newBuilder()
+                .setQueryParameter("ver", "2")
+                .setQueryParameter("cpn", cpn)
+                .setQueryParameter("cmt", num(position))
+                .setQueryParameter("state", if (playing) "playing" else "paused")
+                .setQueryParameter("rt", num((System.nanoTime() - startedAt) / 1e9))
+                .setQueryParameter("volume", "100")
+                .setQueryParameter("muted", "0")
+            if (url.queryParameter("el") == null) builder.setQueryParameter("el", "detailpage")
+            if (url.queryParameter("c") == null) builder.setQueryParameter("c", "WEB")
+            if (url.queryParameter("len") == null) length?.let { builder.setQueryParameter("len", num(it)) }
+            if (from != null) {
+                builder.setQueryParameter("st", num(from)).setQueryParameter("et", num(position))
+            }
+            if (final) builder.setQueryParameter("final", "1")
+
+            val request = signed(
+                Request.Builder()
+                    .url(builder.build())
+                    .header("User-Agent", UA)
+                    .header("Origin", ORIGIN)
+                    .header("X-Origin", ORIGIN)
+            ).build()
+            PmDownloader.client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("watch report answered ${response.code}")
+            }
         }
+
+        private fun num(v: Double) = String.format(java.util.Locale.US, "%.3f", v)
     }
 
     private fun randomCpn(): String {
