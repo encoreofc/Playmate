@@ -189,7 +189,10 @@ class SaveJob(
     val title: String,
     val thumb: String?,
     val target: SaveTarget,
-    val name: String
+    val name: String,
+    /** True for the app's own Downloads (kept inside Playmate); false for "Save to phone". */
+    val offline: Boolean = false,
+    val source: PlayableInfo? = null
 ) {
     var state by mutableStateOf(SaveState.Queued)
     var message by mutableStateOf<String?>(null)
@@ -231,9 +234,15 @@ object SaveCenter {
 
     fun liveJobs(): List<SaveJob> = live.toList()
 
-    fun start(context: Context, info: PlayableInfo, target: SaveTarget, name: String): SaveJob {
+    fun start(
+        context: Context,
+        info: PlayableInfo,
+        target: SaveTarget,
+        name: String,
+        offline: Boolean = false
+    ): SaveJob {
         val app = context.applicationContext
-        val job = SaveJob(ids.incrementAndGet(), info.title, info.thumb, target, name)
+        val job = SaveJob(ids.incrementAndGet(), info.title, info.thumb, target, name, offline, info)
         jobs.add(0, job)
         live.add(job)
         DownloadService.start(app)
@@ -298,9 +307,14 @@ object SaveCenter {
             }
 
             job.state = SaveState.Saving
-            val saved = withContext(Dispatchers.IO) { deliver(ctx, result, job.name, t) }
-            job.uri = saved.uri
-            job.place = saved.place
+            if (job.offline) {
+                withContext(Dispatchers.IO) { OfflineStore.add(ctx, result, job) }
+                job.place = "Downloads"
+            } else {
+                val saved = withContext(Dispatchers.IO) { deliver(ctx, result, job.name, t) }
+                job.uri = saved.uri
+                job.place = saved.place
+            }
             job.state = SaveState.Done
         } catch (e: CancellationException) {
             job.state = SaveState.Cancelled
