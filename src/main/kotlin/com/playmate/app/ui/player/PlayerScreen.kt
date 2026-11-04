@@ -86,11 +86,13 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.playmate.app.AppViewModel
 import com.playmate.app.PlaybackService
 import com.playmate.app.data.Load
 import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.Playing
 import com.playmate.app.data.VideoItem
+import com.playmate.app.data.videoIdOf
 import com.playmate.app.ui.components.ErrorState
 import com.playmate.app.ui.components.SkeletonLines
 import com.playmate.app.ui.components.VideoRow
@@ -110,7 +112,8 @@ fun PlayerScreen(
     expanded: Boolean = true,
     onClose: () -> Unit,
     onOpen: (VideoItem) -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    vm: AppViewModel
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -312,6 +315,25 @@ fun PlayerScreen(
 
     val live = info?.live == true
     val title = info?.title ?: playing.seed.title
+
+    var commentsOpen by remember(playing.seed.url) { mutableStateOf(false) }
+    var saveOpen by remember(playing.seed.url) { mutableStateOf(false) }
+
+    val shareVideo: () -> Unit = {
+        val id = videoIdOf(playing.seed.url)
+        val link = if (id != null) "https://youtu.be/$id" else playing.seed.url
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, if (title.isNotBlank()) "$title\n$link" else link)
+        }
+        runCatching { context.startActivity(Intent.createChooser(send, "Share")) }
+    }
+    val saveVideo: () -> Unit = {
+        if (vm.ensureSignedIn("save videos")) {
+            vm.loadPlaylists()
+            saveOpen = true
+        }
+    }
 
     Column(
         Modifier
@@ -553,7 +575,16 @@ fun PlayerScreen(
         }
 
         if (!fullscreen) {
-            Details(playing = playing, info = info, onOpen = onOpen, onRetry = onRetry)
+            Details(
+                playing = playing,
+                info = info,
+                vm = vm,
+                onOpen = onOpen,
+                onRetry = onRetry,
+                onComments = { commentsOpen = true },
+                onShare = shareVideo,
+                onSave = saveVideo
+            )
         }
     }
 
@@ -619,14 +650,21 @@ fun PlayerScreen(
             }
         }
     }
+
+    if (commentsOpen) CommentsSheet(vm = vm, onDismiss = { commentsOpen = false })
+    if (saveOpen) SaveSheet(vm = vm, onDismiss = { saveOpen = false })
 }
 
 @Composable
 private fun Details(
     playing: Playing,
     info: PlayableInfo?,
+    vm: AppViewModel,
     onOpen: (VideoItem) -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onComments: () -> Unit,
+    onShare: () -> Unit,
+    onSave: () -> Unit
 ) {
     var expanded by remember(playing.seed.url) { mutableStateOf(false) }
 
@@ -644,7 +682,9 @@ private fun Details(
 
             is Load.Ready -> {
                 val data = state.data
-                item { Header(data.title, data.channel, data.views, data.uploaded) }
+                item { Header(data.title, "", data.views, data.uploaded) }
+                item { ChannelRow(vm, data, vm.meta, data.channel) }
+                item { ActionRow(vm, vm.meta, onComments = onComments, onShare = onShare, onSave = onSave) }
 
                 if (data.description.isNotBlank()) {
                     item {
@@ -672,6 +712,8 @@ private fun Details(
                         }
                     }
                 }
+
+                item { CommentsCard(vm.commentsTotal ?: vm.meta?.commentCount, onClick = onComments) }
 
                 if (data.related.isNotEmpty()) {
                     item {
