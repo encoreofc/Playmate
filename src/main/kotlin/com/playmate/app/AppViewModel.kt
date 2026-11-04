@@ -40,7 +40,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class Tab { Home, Search, You }
+enum class Tab { Home, Search, Downloads, You }
 
 /** The channel page on screen. [tab] indexes [ChannelInfo.tabs]; [startTab] is the one that came with the first answer. */
 data class ChannelState(
@@ -489,6 +489,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openUrl(url: String) {
         open(VideoItem(url, "", "", 0, -1, null, null))
+    }
+
+    /** Plays a video that was downloaded inside the app. Needs no internet. */
+    fun openOffline(video: com.playmate.app.data.OfflineVideo) {
+        finishWatch()
+        playJob?.cancel()
+        resetWatchExtras()
+        playerExpanded = true
+        val seed = VideoItem(video.url, video.title, video.channel, video.durationMs / 1000, -1, null, null)
+        playing = Playing(seed, Load.Ready(video.playable(getApplication<Application>())))
     }
 
     fun retryPlayer() {
