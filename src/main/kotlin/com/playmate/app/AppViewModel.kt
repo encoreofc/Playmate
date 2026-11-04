@@ -2,23 +2,32 @@ package com.playmate.app
 
 import android.app.Application
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import com.playmate.app.data.Account
+import com.playmate.app.data.ChannelInfo
+import com.playmate.app.data.ChannelRepo
+import com.playmate.app.data.CommentItem
+import com.playmate.app.data.Engage
 import com.playmate.app.data.FeedPage
 import com.playmate.app.data.FeedRepo
 import com.playmate.app.data.InnerTube
 import com.playmate.app.data.Load
 import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.Playing
+import com.playmate.app.data.PlaylistOption
+import com.playmate.app.data.Reaction
 import com.playmate.app.data.RecentSearches
 import com.playmate.app.data.SeenStore
 import com.playmate.app.data.SearchPage
 import com.playmate.app.data.Session
+import com.playmate.app.data.SortOption
 import com.playmate.app.data.VideoItem
+import com.playmate.app.data.WatchMeta
 import com.playmate.app.data.YouTubeRepo
 import com.playmate.app.data.attempt
 import com.playmate.app.data.friendly
@@ -32,6 +41,28 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 enum class Tab { Home, Search, You }
+
+/** The channel page on screen. [tab] indexes [ChannelInfo.tabs]; [startTab] is the one that came with the first answer. */
+data class ChannelState(
+    val id: String,
+    val seedName: String?,
+    val seedAvatar: String?,
+    val info: Load<ChannelInfo>,
+    val tab: Int,
+    val startTab: Int,
+    val videos: Load<List<VideoItem>>,
+    val token: String?,
+    val firstPage: FeedPage? = null
+)
+
+/** The replies of one comment, as loaded so far. */
+data class RepliesState(
+    val items: List<CommentItem>,
+    val next: String?,
+    val loading: Boolean,
+    val open: Boolean,
+    val error: String? = null
+)
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -65,6 +96,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var playing by mutableStateOf<Playing?>(null); private set
     var playerExpanded by mutableStateOf(true); private set
 
+    /** What YouTube knows about the video on screen: reaction, channel, subscription, comments. */
+    var meta by mutableStateOf<WatchMeta?>(null); private set
+
+    /** Subscription state the app knows about (from YouTube, or from the user's own taps). */
+    val subscriptions = mutableStateMapOf<String, Boolean>()
+
+    var toast by mutableStateOf<String?>(null); private set
+
+    var comments by mutableStateOf<Load<List<CommentItem>>?>(null); private set
+    var commentsNext by mutableStateOf<String?>(null); private set
+    var commentsTotal by mutableStateOf<String?>(null); private set
+    var commentSorts by mutableStateOf<List<SortOption>>(emptyList()); private set
+    var postingComment by mutableStateOf(false); private set
+    val replies = mutableStateMapOf<String, RepliesState>()
+
+    var playlists by mutableStateOf<Load<List<PlaylistOption>>?>(null); private set
+
+    var channel by mutableStateOf<ChannelState?>(null); private set
+
     private var feedJob: Job? = null
     private var suggestJob: Job? = null
     private var searchJob: Job? = null
@@ -72,6 +122,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var historyJob: Job? = null
     private var watchJob: Job? = null
     private var seenSaveJob: Job? = null
+    private var metaJob: Job? = null
+    private var commentsJob: Job? = null
+    private var playlistsJob: Job? = null
+    private var channelJob: Job? = null
+    private var channelTabJob: Job? = null
+    private var commentsFor: String? = null
+    private var commentsGeneration = 0
+    private var createParams: String? = null
+    private var loadingMoreComments = false
+    private var loadingMoreChannel = false
     private var watch: InnerTube.WatchSession? = null
     private var loadingMoreFeed = false
     private var loadingMoreHistory = false
@@ -86,6 +146,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun select(target: Tab) {
         tab = target
+        closeChannel()
     }
 
     // ---------------------------------------------------------------- home feed
@@ -222,12 +283,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         history = Load.Loading
         feed = Load.Loading
         loadFeed()
+        // The video on screen: ask again, now that its like / subscribe state belongs to the account.
+        playing?.let { p -> videoIdOf(p.seed.url)?.let { loadMeta(it, p.seed.url) } }
     }
 
     fun signOut() {
         Session.clear()
         signedIn = false
         account = null
+        subscriptions.clear()
+        meta = meta?.copy(reaction = Reaction.None, subscribed = null)
         finishWatch()
         historyNote = null
         historyToken = null
@@ -358,6 +423,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         finishWatch()
         playerExpanded = true
         playing = Playing(item, Load.Loading)
+        resetWatchExtras()
+        videoIdOf(item.url)?.let { id ->
+            meta = WatchMeta.blank(id)
+            loadMeta(id, item.url)
+        }
         playJob?.cancel()
         playJob = viewModelScope.launch {
             val outcome: Load<PlayableInfo> = attempt { YouTubeRepo.load(item.url) }
@@ -439,7 +509,383 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         playJob?.cancel()
         playing = null
         playerExpanded = true
+        resetWatchExtras()
     }
+
+    // ---------------------------------------------------------------- the video's own page: reactions, channel, save
+
+    fun consumeToast() {
+        toast = null
+    }
+
+    /** True when signed in. Otherwise tells the user and opens the sign-in page. */
+    fun ensureSignedIn(what: String): Boolean {
+        if (Session.loggedIn) return true
+        toast = "Sign in to $what."
+        showLogin = true
+        return false
+    }
+
+    private fun resetWatchExtras() {
+        metaJob?.cancel()
+        commentsJob?.cancel()
+        playlistsJob?.cancel()
+        commentsGeneration++
+        meta = null
+        comments = null
+        commentsNext = null
+        commentsTotal = null
+        commentSorts = emptyList()
+        commentsFor = null
+        createParams = null
+        loadingMoreComments = false
+        postingComment = false
+        replies.clear()
+        playlists = null
+    }
+
+    private fun loadMeta(videoId: String, url: String) {
+        metaJob?.cancel()
+        metaJob = viewModelScope.launch {
+            attempt { Engage.watchMeta(videoId) }.onSuccess { m ->
+                if (playing?.seed?.url != url) return@onSuccess
+                meta = m
+                commentsTotal = commentsTotal ?: m.commentCount
+                val channelId = m.channelId
+                val subscribed = m.subscribed
+                if (channelId != null && subscribed != null) subscriptions[channelId] = subscribed
+            }
+        }
+    }
+
+    /** Like or dislike. Tapping the one that is already on takes it back. */
+    fun react(target: Reaction) {
+        val current = meta ?: return
+        if (!ensureSignedIn("like or dislike videos")) return
+        val next = if (current.reaction == target) Reaction.None else target
+        meta = current.copy(reaction = next, likeCount = bumpedCount(current.likeCount, current.reaction, next))
+        viewModelScope.launch {
+            attempt {
+                when (next) {
+                    Reaction.Liked -> Engage.like(current.videoId)
+                    Reaction.Disliked -> Engage.dislike(current.videoId)
+                    Reaction.None -> Engage.clearReaction(current.videoId)
+                }
+            }.onFailure {
+                if (meta?.videoId == current.videoId) meta = current
+                toast = "Couldn't update your reaction: ${it.message ?: "unknown error"}"
+            }
+        }
+    }
+
+    /** Only a plain number can be bumped; "1.2K" stays as YouTube printed it. */
+    private fun bumpedCount(text: String?, from: Reaction, to: Reaction): String? {
+        val n = text?.replace(",", "")?.toLongOrNull() ?: return text
+        val delta = (if (to == Reaction.Liked) 1 else 0) - (if (from == Reaction.Liked) 1 else 0)
+        return (n + delta).coerceAtLeast(0).toString()
+    }
+
+    fun toggleSubscribe(channelId: String?, currentlySubscribed: Boolean) {
+        if (channelId.isNullOrBlank()) {
+            toast = "This channel couldn't be found."
+            return
+        }
+        if (!ensureSignedIn("subscribe")) return
+        val target = !currentlySubscribed
+        subscriptions[channelId] = target
+        viewModelScope.launch {
+            attempt { if (target) Engage.subscribe(channelId) else Engage.unsubscribe(channelId) }
+                .onFailure {
+                    subscriptions[channelId] = currentlySubscribed
+                    toast = "Couldn't ${if (target) "subscribe" else "unsubscribe"}: ${it.message ?: "unknown error"}"
+                }
+        }
+    }
+
+    // ---- save to playlist
+
+    fun loadPlaylists() {
+        val id = meta?.videoId ?: return
+        playlistsJob?.cancel()
+        playlists = Load.Loading
+        playlistsJob = viewModelScope.launch {
+            playlists = attempt { Engage.playlistsFor(id) }
+                .fold({ Load.Ready(it) }, { Load.Failed(it.message ?: "Couldn't load your playlists.") })
+        }
+    }
+
+    fun togglePlaylist(option: PlaylistOption) {
+        val id = meta?.videoId ?: return
+        val list = (playlists as? Load.Ready)?.data ?: return
+        val add = !option.contains
+        playlists = Load.Ready(list.map { if (it.id == option.id) PlaylistOption(it.id, it.title, add) else it })
+        viewModelScope.launch {
+            attempt { Engage.setInPlaylist(option.id, id, add) }.onFailure {
+                val latest = (playlists as? Load.Ready)?.data
+                if (latest != null) {
+                    playlists = Load.Ready(
+                        latest.map { p -> if (p.id == option.id) PlaylistOption(p.id, p.title, !add) else p }
+                    )
+                }
+                toast = "Couldn't ${if (add) "save to" else "remove from"} ${option.title}: ${it.message ?: "unknown error"}"
+            }
+        }
+    }
+
+    // ---- comments
+
+    /** Loads the first page of comments ([token] picks a sort order). Does nothing if they are already loaded. */
+    fun loadComments(token: String? = null, force: Boolean = false) {
+        val videoId = meta?.videoId ?: return
+        if (!force && token == null && commentsFor == videoId && comments is Load.Ready) return
+        commentsJob?.cancel()
+        val generation = ++commentsGeneration
+        commentsFor = videoId
+        comments = Load.Loading
+        commentsNext = null
+        replies.clear()
+        commentsJob = viewModelScope.launch {
+            val start = token ?: run {
+                metaJob?.join()
+                meta?.takeIf { it.videoId == videoId }?.commentsToken
+            }
+            if (start == null) {
+                if (generation == commentsGeneration) {
+                    comments = Load.Failed("Comments are turned off or unavailable for this video.")
+                }
+                return@launch
+            }
+            attempt { Engage.comments(start) }
+                .onSuccess { page ->
+                    if (generation != commentsGeneration) return@onSuccess
+                    comments = Load.Ready(page.items)
+                    commentsNext = page.next
+                    if (page.total != null) commentsTotal = page.total
+                    if (page.sorts.isNotEmpty()) commentSorts = page.sorts
+                    if (page.createParams != null) createParams = page.createParams
+                }
+                .onFailure {
+                    if (generation == commentsGeneration) {
+                        comments = Load.Failed(it.message ?: "Couldn't load comments.")
+                    }
+                }
+        }
+    }
+
+    fun loadMoreComments() {
+        val token = commentsNext ?: return
+        if (loadingMoreComments || comments !is Load.Ready) return
+        loadingMoreComments = true
+        val generation = commentsGeneration
+        viewModelScope.launch {
+            attempt { Engage.comments(token) }
+                .onSuccess { page ->
+                    if (generation == commentsGeneration) {
+                        val latest = (comments as? Load.Ready)?.data.orEmpty()
+                        val known = latest.map { it.id }.toHashSet()
+                        comments = Load.Ready(latest + page.items.filter { it.id !in known })
+                        commentsNext = page.next
+                    }
+                }
+                .onFailure { if (generation == commentsGeneration) commentsNext = null }
+            loadingMoreComments = false
+        }
+    }
+
+    fun toggleReplies(comment: CommentItem) {
+        val token = comment.repliesToken ?: return
+        val current = replies[comment.id]
+        when {
+            current != null && current.open -> replies[comment.id] = current.copy(open = false)
+            current != null && current.items.isNotEmpty() -> replies[comment.id] = current.copy(open = true)
+            else -> fetchReplies(comment.id, token, RepliesState(emptyList(), null, loading = true, open = true))
+        }
+    }
+
+    fun loadMoreReplies(comment: CommentItem) {
+        val current = replies[comment.id] ?: return
+        val token = current.next ?: return
+        if (current.loading) return
+        fetchReplies(comment.id, token, current.copy(loading = true, error = null))
+    }
+
+    private fun fetchReplies(commentId: String, token: String, start: RepliesState) {
+        replies[commentId] = start
+        val generation = commentsGeneration
+        viewModelScope.launch {
+            attempt { Engage.comments(token, replies = true) }
+                .onSuccess { page ->
+                    if (generation != commentsGeneration) return@onSuccess
+                    val current = replies[commentId] ?: start
+                    val known = current.items.map { it.id }.toHashSet()
+                    replies[commentId] = current.copy(
+                        items = current.items + page.items.filter { it.id !in known },
+                        next = page.next,
+                        loading = false
+                    )
+                }
+                .onFailure {
+                    if (generation != commentsGeneration) return@onFailure
+                    val current = replies[commentId] ?: start
+                    replies[commentId] = current.copy(loading = false, error = it.message ?: "Couldn't load replies.")
+                }
+        }
+    }
+
+    fun postComment(text: String, onPosted: () -> Unit) {
+        val body = text.trim()
+        if (body.isEmpty() || postingComment) return
+        if (!ensureSignedIn("comment")) return
+        val params = createParams ?: run {
+            toast = "Commenting isn't available on this video."
+            return
+        }
+        postingComment = true
+        val generation = commentsGeneration
+        viewModelScope.launch {
+            attempt { Engage.postComment(params, body) }
+                .onSuccess {
+                    if (generation == commentsGeneration) {
+                        val mine = CommentItem(
+                            id = "mine-${System.nanoTime()}",
+                            author = account?.handle ?: account?.name ?: "You",
+                            avatar = account?.avatar,
+                            text = body,
+                            published = "just now",
+                            likes = null,
+                            replies = null,
+                            repliesToken = null
+                        )
+                        comments = Load.Ready(listOf(mine) + (comments as? Load.Ready)?.data.orEmpty())
+                    }
+                    onPosted()
+                }
+                .onFailure { toast = "Couldn't post your comment: ${it.message ?: "unknown error"}" }
+            postingComment = false
+        }
+    }
+
+    // ---------------------------------------------------------------- channel page
+
+    /** Opens a channel. A playing video moves to the mini player and keeps playing. */
+    fun openChannel(id: String?, name: String? = null, avatar: String? = null) {
+        if (id.isNullOrBlank()) {
+            toast = "This channel couldn't be found."
+            return
+        }
+        if (playing != null) playerExpanded = false
+        channelTabJob?.cancel()
+        channel = ChannelState(id, name, avatar, Load.Loading, 0, 0, Load.Loading, null)
+        channelJob?.cancel()
+        channelJob = viewModelScope.launch {
+            attempt { ChannelRepo.open(id) }
+                .onSuccess { data ->
+                    val start = data.info.tabs.indexOfFirst { it.selected }.coerceAtLeast(0)
+                    channel = channel?.takeIf { it.id == id }?.copy(
+                        info = Load.Ready(data.info),
+                        tab = start,
+                        startTab = start,
+                        videos = Load.Ready(withChannelName(data.page.items, data.info.name)),
+                        token = data.page.token,
+                        firstPage = data.page
+                    )
+                }
+                .onFailure {
+                    val message = friendly(it) + (it.message?.let { m -> " ($m)" } ?: "")
+                    channel = channel?.takeIf { it.id == id }
+                        ?.copy(info = Load.Failed(message), videos = Load.Failed(message))
+                }
+        }
+    }
+
+    fun retryChannel() {
+        val state = channel ?: return
+        openChannel(state.id, state.seedName, state.seedAvatar)
+    }
+
+    fun closeChannel() {
+        channelJob?.cancel()
+        channelTabJob?.cancel()
+        channel = null
+        loadingMoreChannel = false
+    }
+
+    fun selectChannelTab(index: Int) {
+        val state = channel ?: return
+        val info = (state.info as? Load.Ready)?.data ?: return
+        if (index == state.tab || index !in info.tabs.indices) return
+        channelTabJob?.cancel()
+        loadingMoreChannel = false
+
+        val first = state.firstPage
+        if (index == state.startTab && first != null) {
+            channel = state.copy(
+                tab = index,
+                videos = Load.Ready(withChannelName(first.items, info.name)),
+                token = first.token
+            )
+            return
+        }
+        val params = info.tabs[index].params
+        if (params == null) {
+            channel = state.copy(tab = index, videos = Load.Failed("This tab isn't available."), token = null)
+            return
+        }
+        channel = state.copy(tab = index, videos = Load.Loading, token = null)
+        channelTabJob = viewModelScope.launch {
+            attempt { ChannelRepo.tab(state.id, params) }
+                .onSuccess { page ->
+                    val now = channel
+                    if (now != null && now.id == state.id && now.tab == index) {
+                        channel = now.copy(
+                            videos = Load.Ready(withChannelName(page.items, info.name)),
+                            token = page.token
+                        )
+                    }
+                }
+                .onFailure {
+                    val now = channel
+                    if (now != null && now.id == state.id && now.tab == index) {
+                        channel = now.copy(
+                            videos = Load.Failed(friendly(it) + (it.message?.let { m -> " ($m)" } ?: "")),
+                            token = null
+                        )
+                    }
+                }
+        }
+    }
+
+    fun loadMoreChannel() {
+        val state = channel ?: return
+        val token = state.token ?: return
+        val current = (state.videos as? Load.Ready)?.data ?: return
+        if (loadingMoreChannel) return
+        loadingMoreChannel = true
+        viewModelScope.launch {
+            attempt { FeedRepo.more(token) }
+                .onSuccess { page ->
+                    val now = channel
+                    if (now != null && now.id == state.id && now.tab == state.tab) {
+                        val have = (now.videos as? Load.Ready)?.data ?: current
+                        val known = have.map { it.url }.toHashSet()
+                        val name = (now.info as? Load.Ready)?.data?.name.orEmpty()
+                        channel = now.copy(
+                            videos = Load.Ready(have + withChannelName(page.items, name).filter { it.url !in known }),
+                            token = page.token
+                        )
+                    }
+                }
+                .onFailure {
+                    val now = channel
+                    if (now != null && now.id == state.id && now.tab == state.tab) channel = now.copy(token = null)
+                }
+            loadingMoreChannel = false
+        }
+    }
+
+    /** Videos on a channel's own page carry no channel name; fill it in. */
+    private fun withChannelName(items: List<VideoItem>, name: String): List<VideoItem> =
+        if (name.isBlank()) items else items.map { if (it.channel.isBlank()) it.copy(channel = name) else it }
 
     private fun looksLikeYouTubeLink(text: String) =
         Regex("^https?://(www\\.|m\\.|music\\.)?(youtube\\.com|youtu\\.be)/\\S+$").matches(text)
