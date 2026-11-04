@@ -9,8 +9,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -25,10 +28,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.playmate.app.AppViewModel
 import com.playmate.app.Tab
+import com.playmate.app.data.SaveCenter
 import com.playmate.app.ui.account.LoginScreen
 import com.playmate.app.ui.account.YouScreen
 import com.playmate.app.ui.channel.ChannelScreen
 import com.playmate.app.ui.components.MiniPlayer
+import com.playmate.app.ui.downloads.DownloadsScreen
 import com.playmate.app.ui.home.HomeScreen
 import com.playmate.app.ui.player.PlayerScreen
 import com.playmate.app.ui.search.SearchScreen
@@ -37,6 +42,7 @@ import com.playmate.app.ui.search.SearchScreen
 fun AppRoot(vm: AppViewModel) {
     val playerOnScreen = vm.playing != null && vm.playerExpanded
     val context = LocalContext.current
+    val activeDownloads = SaveCenter.jobs.count { it.offline && it.running }
 
     // Messages from actions (sign in needed, a like that failed...) show as a short toast.
     LaunchedEffect(vm.toast) {
@@ -93,6 +99,17 @@ fun AppRoot(vm: AppViewModel) {
                             colors = colors
                         )
                         NavigationBarItem(
+                            selected = vm.tab == Tab.Downloads,
+                            onClick = { vm.select(Tab.Downloads) },
+                            icon = {
+                                BadgedBox(badge = { if (activeDownloads > 0) Badge { Text("$activeDownloads") } }) {
+                                    Icon(Icons.Rounded.Download, contentDescription = null)
+                                }
+                            },
+                            label = { Text("Downloads") },
+                            colors = colors
+                        )
+                        NavigationBarItem(
                             selected = vm.tab == Tab.You,
                             onClick = { vm.select(Tab.You) },
                             icon = { Icon(Icons.Rounded.AccountCircle, contentDescription = null) },
@@ -110,6 +127,7 @@ fun AppRoot(vm: AppViewModel) {
                     when (vm.tab) {
                         Tab.Home -> HomeScreen(vm)
                         Tab.Search -> SearchScreen(vm)
+                        Tab.Downloads -> DownloadsScreen(vm)
                         Tab.You -> YouScreen(vm)
                     }
                 }
