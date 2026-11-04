@@ -36,7 +36,9 @@ class PlayableInfo(
     val related: List<VideoItem>,
     val channelId: String? = null,
     val channelAvatar: String? = null,
-    val audios: List<AudioStream> = emptyList()
+    val audios: List<AudioStream> = emptyList(),
+    /** Set when this is a download kept inside the app: the file to play, no internet needed. */
+    val localUri: String? = null
 )
 
 class SearchPage(
