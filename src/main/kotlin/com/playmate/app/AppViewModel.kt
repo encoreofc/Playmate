@@ -1,306 +1,402 @@
-package com.playmate.app
+package com.playmate.app.data
 
-import android.app.Application
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
-import com.playmate.app.data.Account
-import com.playmate.app.data.FeedPage
-import com.playmate.app.data.FeedRepo
-import com.playmate.app.data.InnerTube
-import com.playmate.app.data.Load
-import com.playmate.app.data.PlayableInfo
-import com.playmate.app.data.Playing
-import com.playmate.app.data.RecentSearches
-import com.playmate.app.data.SearchPage
-import com.playmate.app.data.Session
-import com.playmate.app.data.VideoItem
-import com.playmate.app.data.YouTubeRepo
-import com.playmate.app.data.attempt
-import com.playmate.app.data.friendly
-import com.playmate.app.data.videoIdOf
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
-enum class Tab { Home, Search, You }
+/**
+ * One page of a feed. [note] is only filled when the page came back without a single video:
+ * it is a short, readable summary of what the server did send, so a blank feed can be explained.
+ */
+class FeedPage(
+    val items: List<VideoItem>,
+    val token: String?,
+    val note: String? = null,
+    /** True when the account itself has nothing to show (no watch history yet): not an error. */
+    val accountEmpty: Boolean = false
+)
 
-class AppViewModel(app: Application) : AndroidViewModel(app) {
+object FeedRepo {
+    suspend fun home(): FeedPage = load("FEwhat_to_watch", "/")
+    suspend fun history(): FeedPage = load("FEhistory", "/feed/history")
+    suspend fun more(token: String): FeedPage = parse(InnerTube.continuation(token))
 
-    private val recentStore = RecentSearches(app)
+    private suspend fun parse(root: JSONObject): FeedPage =
+        withContext(Dispatchers.Default) { FeedParser.parse(root) }
 
-    var tab by mutableStateOf(Tab.Home); private set
+    /**
+     * Loads a feed the most reliable way available:
+     *  1. the API call;
+     *  2. if that page is empty but carries a continuation, the continuation (some answers are
+     *     only a "load the rest" stub);
+     *  3. if the API gave nothing at all, the site's own page for the same feed.
+     */
+    private suspend fun load(browseId: String, webPath: String): FeedPage {
+        val api = attempt { followStub(parse(InnerTube.browse(browseId))) }
+        api.getOrNull()?.takeIf { it.items.isNotEmpty() }?.let { return it }
 
-    var feed by mutableStateOf<Load<List<VideoItem>>>(Load.Loading); private set
-    var feedToken by mutableStateOf<String?>(null); private set
-    var feedNote by mutableStateOf<String?>(null); private set
-    var refreshing by mutableStateOf(false); private set
+        val web = attempt { followStub(parse(InnerTube.page(webPath))) }
+        web.getOrNull()?.takeIf { it.items.isNotEmpty() }?.let { return it }
 
-    var query by mutableStateOf(""); private set
-    var editing by mutableStateOf(false); private set
-    var suggestions by mutableStateOf<List<String>>(emptyList()); private set
-    var results by mutableStateOf<Load<SearchPage>?>(null); private set
-    var loadingMore by mutableStateOf(false); private set
-    var recents by mutableStateOf(recentStore.all()); private set
+        val apiNote = api.fold({ "api: ${it.note ?: "no videos"}" }, { "api failed: ${it.message}" })
+        val webNote = web.fold({ "page: ${it.note ?: "no videos"}" }, { "page failed: ${it.message}" })
+        if (api.isFailure && web.isFailure) {
+            throw java.io.IOException("$apiNote | $webNote")
+        }
+        // The server answered normally and says the account has nothing yet: a new feed
+        // ("Start watching videos...") or a history list with no entries.
+        val answer = "$apiNote | $webNote"
+        val noRecommendations = answer.contains("feedNudgeRenderer")
+        val noHistory = answer.contains("messageRenderer") && answer.contains("itemSectionRenderer")
+        if (InnerTube.sessionRecognised != false && (noRecommendations || noHistory)) {
+            return FeedPage(emptyList(), null, null, accountEmpty = true)
+        }
 
-    var signedIn by mutableStateOf(false); private set
-    var account by mutableStateOf<Account?>(null); private set
-    var showLogin by mutableStateOf(false); private set
-    var history by mutableStateOf<Load<List<VideoItem>>>(Load.Loading); private set
-    var historyNote by mutableStateOf<String?>(null); private set
-    var trackingNote by mutableStateOf<String?>(null); private set
-
-    var playing by mutableStateOf<Playing?>(null); private set
-    var playerExpanded by mutableStateOf(true); private set
-
-    private var feedJob: Job? = null
-    private var suggestJob: Job? = null
-    private var searchJob: Job? = null
-    private var playJob: Job? = null
-    private var historyJob: Job? = null
-    private var loadingMoreFeed = false
-
-    init {
-        Session.init(app)
-        signedIn = Session.loggedIn
-        if (signedIn) loadAccount()
-        loadFeed()
+        val signIn = when (InnerTube.sessionRecognised) {
+            true -> "signed in"
+            false -> "NOT recognised as signed in"
+            null -> "sign-in state unknown"
+        }
+        return FeedPage(emptyList(), null, "$signIn. $apiNote | $webNote")
     }
 
-    fun select(target: Tab) {
-        tab = target
+    /** Follows up to three empty "stub" pages to the real content. */
+    private suspend fun followStub(first: FeedPage): FeedPage {
+        var page = first
+        var hops = 0
+        while (page.items.isEmpty() && page.token != null && hops < 3) {
+            page = parse(InnerTube.continuation(page.token!!))
+            hops++
+        }
+        return page
     }
+}
 
-    // ---------------------------------------------------------------- home feed
+fun videoIdOf(url: String): String? =
+    Regex("(?:[?&]v=|youtu\\.be/|/shorts/|/live/)([A-Za-z0-9_-]{11})").find(url)?.groupValues?.get(1)
 
-    fun loadFeed(force: Boolean = false) {
-        if (!force && feed is Load.Ready) return
-        feedJob?.cancel()
-        feedJob = viewModelScope.launch {
-            if (force) refreshing = true else feed = Load.Loading
-            feedNote = null
-            var token: String? = null
-            var why: String? = null
-
-            // Signed in: the account's own recommendations. Otherwise (or if that fails): trending.
-            val personal: FeedPage? = if (Session.loggedIn) {
-                attempt { FeedRepo.home() }
-                    .onFailure { why = it.message }
-                    .getOrNull()
-                    ?.also { if (it.items.isEmpty()) why = it.note }
-                    ?.takeIf { it.items.isNotEmpty() }
-            } else null
-
-            val result = if (personal != null) {
-                token = personal.token
-                Result.success(personal.items)
-            } else {
-                if (Session.loggedIn) {
-                    feedNote = "Couldn't load your personal feed (${why ?: "empty answer"}). Showing trending instead."
-                }
-                attempt { YouTubeRepo.trending() }
+/** First object stored under [key] anywhere inside [node]. */
+fun findObject(node: Any?, key: String): JSONObject? {
+    when (node) {
+        is JSONObject -> {
+            node.optJSONObject(key)?.let { return it }
+            val keys = node.keys()
+            while (keys.hasNext()) {
+                findObject(node.opt(keys.next()), key)?.let { return it }
             }
-
-            feedToken = token
-            result
-                .onSuccess {
-                    feed = if (it.isEmpty()) Load.Failed("Nothing to show right now.") else Load.Ready(it)
-                }
-                .onFailure {
-                    if (!(force && feed is Load.Ready)) feed = Load.Failed(friendly(it))
-                }
-            refreshing = false
+        }
+        is JSONArray -> for (i in 0 until node.length()) {
+            findObject(node.opt(i), key)?.let { return it }
         }
     }
+    return null
+}
 
-    fun loadMoreFeed() {
-        val token = feedToken ?: return
-        val current = (feed as? Load.Ready)?.data ?: return
-        if (loadingMoreFeed) return
-        loadingMoreFeed = true
-        viewModelScope.launch {
-            attempt { FeedRepo.more(token) }
-                .onSuccess { page ->
-                    val known = current.map { it.url }.toHashSet()
-                    feed = Load.Ready(current + page.items.filter { it.url !in known })
-                    feedToken = page.token
-                }
-                .onFailure { feedToken = null }
-            loadingMoreFeed = false
+private fun collectObjects(node: Any?, key: String, out: MutableList<JSONObject>) {
+    when (node) {
+        is JSONObject -> {
+            val keys = node.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val v = node.opt(k)
+                if (k == key && v is JSONObject) out += v else collectObjects(v, key, out)
+            }
         }
+        is JSONArray -> for (i in 0 until node.length()) collectObjects(node.opt(i), key, out)
     }
+}
 
-    // ---------------------------------------------------------------- account
+/**
+ * Reads YouTube's feed JSON without depending on its exact layout: it walks the whole
+ * tree and picks out every video card, whichever of the known card formats it uses.
+ * Ad slots and promoted cards are skipped.
+ */
+object FeedParser {
 
-    fun openLogin() {
-        showLogin = true
-    }
+    private val VIDEO_RENDERERS = setOf(
+        "videoRenderer", "gridVideoRenderer", "compactVideoRenderer", "playlistVideoRenderer"
+    )
+    private val AD_KEYS = setOf(
+        "adSlotRenderer", "promotedVideoRenderer", "promotedSparklesWebRenderer",
+        "inFeedAdLayoutRenderer", "displayAdRenderer", "bannerPromoRenderer"
+    )
 
-    fun cancelLogin() {
-        showLogin = false
-    }
+    fun parse(root: JSONObject): FeedPage {
+        val found = LinkedHashMap<String, VideoItem>()
+        var token: String? = null
 
-    fun onSignedIn(cookie: String) {
-        Session.save(cookie)
-        showLogin = false
-        signedIn = Session.loggedIn
-        if (!signedIn) return
-        loadAccount()
-        history = Load.Loading
-        feed = Load.Loading
-        loadFeed()
-    }
-
-    fun signOut() {
-        Session.clear()
-        signedIn = false
-        account = null
-        historyNote = null
-        trackingNote = null
-        history = Load.Ready(emptyList())
-        feed = Load.Loading
-        loadFeed()
-    }
-
-    private fun loadAccount() {
-        viewModelScope.launch {
-            account = attempt { InnerTube.account() }.getOrNull()
+        fun add(item: VideoItem?) {
+            if (item != null && item.url !in found) found[item.url] = item
         }
-    }
 
-    fun loadHistory() {
-        if (!Session.loggedIn) return
-        historyJob?.cancel()
-        historyJob = viewModelScope.launch {
-            if (history !is Load.Ready) history = Load.Loading
-            attempt { FeedRepo.history() }
-                .onSuccess {
-                    history = Load.Ready(it.items)
-                    historyNote = if (it.items.isEmpty()) it.note else null
-                }
-                .onFailure {
-                    if (history !is Load.Ready) {
-                        history = Load.Failed(friendly(it) + (it.message?.let { m -> " ($m)" } ?: ""))
+        fun visit(node: Any?) {
+            when (node) {
+                is JSONArray -> for (i in 0 until node.length()) visit(node.opt(i))
+                is JSONObject -> {
+                    val keys = node.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        val value = node.opt(key)
+                        when {
+                            key in AD_KEYS -> Unit
+                            key in VIDEO_RENDERERS && value is JSONObject -> add(renderer(value))
+                            key == "lockupViewModel" && value is JSONObject -> add(lockup(value))
+                            key == "shortsLockupViewModel" && value is JSONObject -> add(shortsLockup(value))
+                            key == "reelItemRenderer" && value is JSONObject -> add(reelItem(value))
+                            key == "continuationItemRenderer" && value is JSONObject -> {
+                                if (token == null) {
+                                    token = value.str("continuationEndpoint", "continuationCommand", "token")
+                                        .ifBlank { null }
+                                }
+                            }
+                            else -> visit(value)
+                        }
                     }
                 }
-        }
-    }
-
-    // ---------------------------------------------------------------- search
-
-    fun onQueryChange(value: String) {
-        query = value
-        editing = true
-        suggestJob?.cancel()
-        if (value.trim().length < 2) {
-            suggestions = emptyList()
-            return
-        }
-        suggestJob = viewModelScope.launch {
-            delay(200)
-            suggestions = attempt { YouTubeRepo.suggestions(value.trim()) }
-                .getOrDefault(emptyList())
-                .take(8)
-        }
-    }
-
-    fun startEditing() {
-        editing = true
-    }
-
-    fun submit(text: String = query) {
-        val q = text.trim()
-        if (q.isEmpty()) return
-        if (looksLikeYouTubeLink(q)) {
-            openUrl(q)
-            return
-        }
-        query = q
-        editing = false
-        suggestions = emptyList()
-        tab = Tab.Search
-        recentStore.add(q)
-        recents = recentStore.all()
-
-        suggestJob?.cancel()
-        searchJob?.cancel()
-        results = Load.Loading
-        searchJob = viewModelScope.launch {
-            results = attempt { YouTubeRepo.search(q) }
-                .fold({ Load.Ready(it) }, { Load.Failed(friendly(it)) })
-        }
-    }
-
-    fun loadMore() {
-        val page = when (val r = results) {
-            is Load.Ready -> r.data
-            else -> return
-        }
-        if (loadingMore || page.next == null) return
-        loadingMore = true
-        viewModelScope.launch {
-            attempt { YouTubeRepo.more(page) }.onSuccess { results = Load.Ready(it) }
-            loadingMore = false
-        }
-    }
-
-    fun removeRecent(text: String) {
-        recentStore.remove(text)
-        recents = recentStore.all()
-    }
-
-    fun clearRecents() {
-        recentStore.clear()
-        recents = emptyList()
-    }
-
-    // ---------------------------------------------------------------- player
-
-    fun open(item: VideoItem) {
-        playerExpanded = true
-        playing = Playing(item, Load.Loading)
-        playJob?.cancel()
-        playJob = viewModelScope.launch {
-            val outcome: Load<PlayableInfo> = attempt { YouTubeRepo.load(item.url) }
-                .fold({ Load.Ready(it) }, { Load.Failed(friendly(it)) })
-            playing = playing?.takeIf { it.seed.url == item.url }?.copy(info = outcome)
-
-            // Signed in: tell YouTube it was watched, so it shows up in history and recommendations.
-            if (outcome is Load.Ready && Session.loggedIn) {
-                videoIdOf(item.url)?.let { id ->
-                    attempt { InnerTube.registerPlayback(id) }
-                        .onSuccess { trackingNote = null }
-                        .onFailure { trackingNote = it.message ?: "unknown error" }
-                }
             }
         }
+
+        visit(root)
+        val items = found.values.toList()
+        return FeedPage(items, token, if (items.isEmpty()) describe(root) else null)
     }
 
-    fun openUrl(url: String) {
-        open(VideoItem(url, "", "", 0, -1, null, null))
+    /**
+     * A short summary of what an answer contains, e.g.
+     * "keys: responseContext,contents; seen: richItemRenderer=24 lockupViewModel=24".
+     * Used to explain an empty feed.
+     */
+    fun describe(root: JSONObject): String {
+        val counts = LinkedHashMap<String, Int>()
+        val texts = LinkedHashSet<String>()
+
+        fun walk(node: Any?) {
+            when (node) {
+                is JSONObject -> {
+                    val keys = node.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        if (k.endsWith("Renderer") || k.endsWith("ViewModel")) {
+                            counts[k] = (counts[k] ?: 0) + 1
+                        }
+                        walk(node.opt(k))
+                    }
+                    if (texts.size < 4 && (node.has("simpleText") || node.has("runs"))) {
+                        val line = text(node).trim()
+                        if (line.isNotBlank()) texts += line.take(90)
+                    }
+                }
+                is JSONArray -> for (i in 0 until node.length()) walk(node.opt(i))
+            }
+        }
+
+        // Only the feed body: the page shell (menus, shortcuts, top bar) is the same for every answer.
+        val body: Any = root.opt("contents") ?: root
+        walk(body)
+        val top = counts.entries
+            .sortedByDescending { it.value }
+            .take(10)
+            .joinToString(" ") { "${it.key}=${it.value}" }
+        val tab = findObject(body, "tabRenderer")?.keys()?.asSequence()?.take(8)?.joinToString(",")
+        return buildString {
+            append("keys: ").append(root.keys().asSequence().take(6).joinToString(","))
+            append("; seen: ").append(top.ifBlank { "nothing" })
+            if (tab != null) append("; tab: ").append(tab)
+            if (texts.isNotEmpty()) append("; text: ").append(texts.joinToString(" / ") { "\"$it\"" })
+        }
     }
 
-    fun retryPlayer() {
-        playing?.seed?.let { open(it) }
+    // ---- classic cards (videoRenderer & friends) ----
+
+    private fun renderer(o: JSONObject): VideoItem? {
+        val id = o.optString("videoId")
+        if (id.isBlank() || o.has("upcomingEventData")) return null
+        val title = text(o.optJSONObject("title"))
+        if (title.isBlank()) return null
+
+        val channel = text(o.optJSONObject("longBylineText"))
+            .ifBlank { text(o.optJSONObject("ownerText")) }
+            .ifBlank { text(o.optJSONObject("shortBylineText")) }
+
+        var duration = clock(text(o.optJSONObject("lengthText")))
+        var live = false
+        val overlays = o.optJSONArray("thumbnailOverlays")
+        if (overlays != null) {
+            for (i in 0 until overlays.length()) {
+                val status = overlays.optJSONObject(i)
+                    ?.optJSONObject("thumbnailOverlayTimeStatusRenderer") ?: continue
+                if (status.optString("style") == "LIVE") live = true
+                if (duration <= 0L) duration = clock(text(status.optJSONObject("text")))
+            }
+        }
+
+        val viewsText = text(o.optJSONObject("viewCountText"))
+            .ifBlank { text(o.optJSONObject("shortViewCountText")) }
+        if (viewsText.contains("watching", ignoreCase = true)) live = true
+
+        val thumbs = o.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+        val thumb = thumbs?.optJSONObject(thumbs.length() - 1)?.optString("url")
+            ?.takeIf { it.isNotBlank() } ?: fallbackThumb(id)
+
+        return VideoItem(
+            url = watchUrl(id),
+            title = title,
+            channel = channel,
+            durationSec = duration,
+            views = count(viewsText),
+            thumb = thumb,
+            uploaded = text(o.optJSONObject("publishedTimeText")).ifBlank { null },
+            live = live
+        )
     }
 
-    /** Back / down-arrow: the video keeps playing in a mini player above the tab bar. */
-    fun minimizePlayer() {
-        playerExpanded = false
+    // ---- newer cards (lockupViewModel) ----
+
+    private fun lockup(o: JSONObject): VideoItem? {
+        val type = o.optString("contentType")
+        val id = o.optString("contentId")
+        if (id.isBlank()) return null
+        // Videos only: playlists, channels and mixes use other content types.
+        val isVideo = type == "LOCKUP_CONTENT_TYPE_VIDEO" ||
+            (type.isBlank() && Regex("^[A-Za-z0-9_-]{11}$").matches(id))
+        if (!isVideo) return null
+        val meta = o.optJSONObject("metadata")?.optJSONObject("lockupMetadataViewModel") ?: return null
+        val title = text(meta.optJSONObject("title"))
+        if (title.isBlank()) return null
+
+        val rows = meta.optJSONObject("metadata")
+            ?.optJSONObject("contentMetadataViewModel")
+            ?.optJSONArray("metadataRows")
+        val cells = mutableListOf<List<String>>()
+        if (rows != null) {
+            for (i in 0 until rows.length()) {
+                val parts = rows.optJSONObject(i)?.optJSONArray("metadataParts") ?: continue
+                cells += List(parts.length()) { j -> text(parts.optJSONObject(j)?.optJSONObject("text")) }
+            }
+        }
+        val channel = cells.getOrNull(0)?.firstOrNull().orEmpty()
+        val stats = cells.getOrNull(1).orEmpty()
+        val viewsText = stats.getOrNull(0).orEmpty()
+        val published = stats.getOrNull(1)?.ifBlank { null }
+
+        var duration = 0L
+        var live = viewsText.contains("watching", ignoreCase = true)
+        val badges = mutableListOf<JSONObject>()
+        collectObjects(o.optJSONObject("contentImage"), "thumbnailBadgeViewModel", badges)
+        for (badge in badges) {
+            val label = badge.optString("text")
+            if (label.equals("LIVE", ignoreCase = true)) live = true
+            else if (duration <= 0L) duration = clock(label)
+        }
+
+        val sources = findObject(o.optJSONObject("contentImage"), "image")?.optJSONArray("sources")
+        val thumb = sources?.optJSONObject(sources.length() - 1)?.optString("url")
+            ?.takeIf { it.isNotBlank() } ?: fallbackThumb(id)
+
+        return VideoItem(
+            url = watchUrl(id),
+            title = title,
+            channel = channel,
+            durationSec = duration,
+            views = count(viewsText),
+            thumb = thumb,
+            uploaded = published,
+            live = live
+        )
     }
 
-    fun expandPlayer() {
-        playerExpanded = true
+    // ---- short-form cards ----
+
+    /** Short cards in the newer layout (shortsLockupViewModel). */
+    private fun shortsLockup(o: JSONObject): VideoItem? {
+        val id = findObject(o, "reelWatchEndpoint")?.optString("videoId").orEmpty()
+            .ifBlank { o.optString("entityId").substringAfterLast("-") }
+        if (!Regex("^[A-Za-z0-9_-]{11}$").matches(id)) return null
+
+        val overlay = o.optJSONObject("overlayMetadata")
+        val title = text(overlay?.optJSONObject("primaryText"))
+            .ifBlank { o.optString("accessibilityText").substringBefore(",") }
+        if (title.isBlank()) return null
+        val viewsText = text(overlay?.optJSONObject("secondaryText"))
+
+        val sources = o.optJSONObject("thumbnail")?.optJSONArray("sources")
+            ?: findObject(o, "thumbnail")?.optJSONArray("sources")
+        val thumb = sources?.optJSONObject(sources.length() - 1)?.optString("url")
+            ?.takeIf { it.isNotBlank() } ?: fallbackThumb(id)
+
+        return VideoItem(
+            url = shortUrl(id),
+            title = title,
+            channel = "Shorts",
+            durationSec = 0L,
+            views = count(viewsText),
+            thumb = thumb,
+            uploaded = null,
+            live = false
+        )
     }
 
-    fun closePlayer() {
-        playJob?.cancel()
-        playing = null
-        playerExpanded = true
+    /** Short cards in the older layout (reelItemRenderer). */
+    private fun reelItem(o: JSONObject): VideoItem? {
+        val id = o.optString("videoId")
+        if (id.isBlank()) return null
+        val title = text(o.optJSONObject("headline"))
+        if (title.isBlank()) return null
+        val thumbs = o.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
+        val thumb = thumbs?.optJSONObject(thumbs.length() - 1)?.optString("url")
+            ?.takeIf { it.isNotBlank() } ?: fallbackThumb(id)
+        return VideoItem(
+            url = shortUrl(id),
+            title = title,
+            channel = "Shorts",
+            durationSec = 0L,
+            views = count(text(o.optJSONObject("viewCountText"))),
+            thumb = thumb,
+            uploaded = null,
+            live = false
+        )
     }
 
-    private fun looksLikeYouTubeLink(text: String) =
-        Regex("^https?://(www\\.|m\\.|music\\.)?(youtube\\.com|youtu\\.be)/\\S+$").matches(text)
+    // ---- small helpers ----
+
+    private fun watchUrl(id: String) = "https://www.youtube.com/watch?v=$id"
+
+    private fun shortUrl(id: String) = "https://www.youtube.com/shorts/$id"
+
+    private fun fallbackThumb(id: String) = "https://i.ytimg.com/vi/$id/hqdefault.jpg"
+
+    private fun text(o: JSONObject?): String {
+        if (o == null) return ""
+        val simple = o.optString("simpleText")
+        if (simple.isNotBlank()) return simple
+        val runs = o.optJSONArray("runs") ?: return o.optString("content")
+        return buildString {
+            for (i in 0 until runs.length()) append(runs.optJSONObject(i)?.optString("text").orEmpty())
+        }
+    }
+
+    private fun clock(raw: String): Long {
+        val s = raw.trim()
+        if (!Regex("^\\d{1,2}(:\\d{2}){1,2}$").matches(s)) return 0L
+        return s.split(":").fold(0L) { acc, part -> acc * 60 + part.toLong() }
+    }
+
+    private fun count(raw: String): Long {
+        val m = Regex("([\\d.,]+)\\s*([KMBkmb])?").find(raw) ?: return -1L
+        val n = m.groupValues[1].replace(",", "").toDoubleOrNull() ?: return -1L
+        val factor = when (m.groupValues[2].uppercase()) {
+            "K" -> 1e3
+            "M" -> 1e6
+            "B" -> 1e9
+            else -> 1.0
+        }
+        return (n * factor).toLong()
+    }
+
+    private fun JSONObject.str(vararg path: String): String {
+        var cur: Any? = this
+        for (key in path) cur = (cur as? JSONObject)?.opt(key)
+        return (cur as? String).orEmpty()
+    }
 }
