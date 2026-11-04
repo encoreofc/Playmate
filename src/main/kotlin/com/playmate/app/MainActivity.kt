@@ -1,17 +1,25 @@
 package com.playmate.app
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
 import com.playmate.app.ui.AppRoot
 import com.playmate.app.ui.theme.PlaymateTheme
 
 class MainActivity : ComponentActivity() {
 
     private val vm: AppViewModel by viewModels()
+
+    private val askNotifications =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -22,11 +30,20 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (savedInstanceState == null) handle(intent)
+        askNotificationPermission()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handle(intent)
+    }
+
+    private fun askNotificationPermission() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private fun handle(intent: Intent?) {
