@@ -117,8 +117,10 @@ object DownloadNotifications {
         val percent = if (total > 0) ((done * 100) / total).toInt().coerceIn(0, 100) else 0
         val downloading = jobs.any { it.state == SaveState.Downloading } && total > 0
 
+        val offline = jobs.isNotEmpty() && jobs.all { it.offline }
+
         val title = when {
-            jobs.size > 1 -> "Saving ${jobs.size} files to phone"
+            jobs.size > 1 -> if (offline) "Downloading ${jobs.size} videos" else "Saving ${jobs.size} files to phone"
             single != null -> single.name
             else -> "Playmate"
         }
@@ -128,7 +130,7 @@ object DownloadNotifications {
                 SaveState.Queued -> "Waiting to start"
                 SaveState.Downloading -> "Downloading  $percent%"
                 SaveState.Joining -> "Joining video and audio"
-                SaveState.Saving -> "Saving to your phone"
+                SaveState.Saving -> if (offline) "Finishing up" else "Saving to your phone"
                 else -> "Finishing up"
             }
             else -> "$percent% overall"
@@ -176,13 +178,29 @@ object DownloadNotifications {
                 view,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
+        } else if (ok && job.offline) {
+            PendingIntent.getActivity(
+                ctx,
+                job.id,
+                Intent(ctx, MainActivity::class.java)
+                    .putExtra(MainActivity.EXTRA_OPEN_DOWNLOADS, true)
+                    .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
         } else {
             openApp(ctx)
         }
 
         val notification = NotificationCompat.Builder(ctx, CH_DONE)
             .setSmallIcon(if (ok) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error)
-            .setContentTitle(if (ok) "Saved to your phone" else "Couldn't save")
+            .setContentTitle(
+                when {
+                    ok && job.offline -> "Download complete"
+                    ok -> "Saved to your phone"
+                    job.offline -> "Couldn't download"
+                    else -> "Couldn't save"
+                }
+            )
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
