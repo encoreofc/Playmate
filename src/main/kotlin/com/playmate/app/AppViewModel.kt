@@ -49,6 +49,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var account by mutableStateOf<Account?>(null); private set
     var showLogin by mutableStateOf(false); private set
     var history by mutableStateOf<Load<List<VideoItem>>>(Load.Loading); private set
+    var historyNote by mutableStateOf<String?>(null); private set
+    var trackingNote by mutableStateOf<String?>(null); private set
 
     var playing by mutableStateOf<Playing?>(null); private set
     var playerExpanded by mutableStateOf(true); private set
@@ -87,6 +89,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 attempt { FeedRepo.home() }
                     .onFailure { why = it.message }
                     .getOrNull()
+                    ?.also { if (it.items.isEmpty()) why = it.note }
                     ?.takeIf { it.items.isNotEmpty() }
             } else null
 
@@ -154,6 +157,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         Session.clear()
         signedIn = false
         account = null
+        historyNote = null
+        trackingNote = null
         history = Load.Ready(emptyList())
         feed = Load.Loading
         loadFeed()
@@ -170,9 +175,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         historyJob?.cancel()
         historyJob = viewModelScope.launch {
             if (history !is Load.Ready) history = Load.Loading
-            attempt { FeedRepo.history().items }
-                .onSuccess { history = Load.Ready(it) }
-                .onFailure { if (history !is Load.Ready) history = Load.Failed(friendly(it)) }
+            attempt { FeedRepo.history() }
+                .onSuccess {
+                    history = Load.Ready(it.items)
+                    historyNote = if (it.items.isEmpty()) it.note else null
+                }
+                .onFailure {
+                    if (history !is Load.Ready) {
+                        history = Load.Failed(friendly(it) + (it.message?.let { m -> " ($m)" } ?: ""))
+                    }
+                }
         }
     }
 
@@ -257,7 +269,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
             // Signed in: tell YouTube it was watched, so it shows up in history and recommendations.
             if (outcome is Load.Ready && Session.loggedIn) {
-                videoIdOf(item.url)?.let { id -> attempt { InnerTube.registerPlayback(id) } }
+                videoIdOf(item.url)?.let { id ->
+                    attempt { InnerTube.registerPlayback(id) }
+                        .onSuccess { trackingNote = null }
+                        .onFailure { trackingNote = it.message ?: "unknown error" }
+                }
             }
         }
     }
