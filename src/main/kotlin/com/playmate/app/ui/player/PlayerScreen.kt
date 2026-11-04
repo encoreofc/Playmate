@@ -402,7 +402,7 @@ fun PlayerScreen(
                     }
                 }
 
-                AnimatedVisibility(
+                this@Column.AnimatedVisibility(
                     visible = controls || playbackError != null,
                     enter = fadeIn(),
                     exit = fadeOut(),
