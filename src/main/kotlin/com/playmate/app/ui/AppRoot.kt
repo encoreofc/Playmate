@@ -1,5 +1,6 @@
 package com.playmate.app.ui
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,12 +19,15 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.playmate.app.AppViewModel
 import com.playmate.app.Tab
 import com.playmate.app.ui.account.LoginScreen
 import com.playmate.app.ui.account.YouScreen
+import com.playmate.app.ui.channel.ChannelScreen
 import com.playmate.app.ui.components.MiniPlayer
 import com.playmate.app.ui.home.HomeScreen
 import com.playmate.app.ui.player.PlayerScreen
@@ -32,8 +36,20 @@ import com.playmate.app.ui.search.SearchScreen
 @Composable
 fun AppRoot(vm: AppViewModel) {
     val playerOnScreen = vm.playing != null && vm.playerExpanded
+    val context = LocalContext.current
 
-    BackHandler(enabled = !playerOnScreen && vm.tab != Tab.Home) {
+    // Messages from actions (sign in needed, a like that failed...) show as a short toast.
+    LaunchedEffect(vm.toast) {
+        vm.toast?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            vm.consumeToast()
+        }
+    }
+
+    BackHandler(enabled = !playerOnScreen && vm.channel != null) {
+        vm.closeChannel()
+    }
+    BackHandler(enabled = !playerOnScreen && vm.channel == null && vm.tab != Tab.Home) {
         vm.select(Tab.Home)
     }
 
@@ -88,10 +104,14 @@ fun AppRoot(vm: AppViewModel) {
             }
         ) { padding ->
             Box(Modifier.padding(padding)) {
-                when (vm.tab) {
-                    Tab.Home -> HomeScreen(vm)
-                    Tab.Search -> SearchScreen(vm)
-                    Tab.You -> YouScreen(vm)
+                if (vm.channel != null) {
+                    ChannelScreen(vm)
+                } else {
+                    when (vm.tab) {
+                        Tab.Home -> HomeScreen(vm)
+                        Tab.Search -> SearchScreen(vm)
+                        Tab.You -> YouScreen(vm)
+                    }
                 }
             }
         }
@@ -104,7 +124,8 @@ fun AppRoot(vm: AppViewModel) {
                     expanded = vm.playerExpanded,
                     onClose = vm::minimizePlayer,
                     onOpen = vm::open,
-                    onRetry = vm::retryPlayer
+                    onRetry = vm::retryPlayer,
+                    vm = vm
                 )
             }
         }
