@@ -126,6 +126,7 @@ fun HomeScreen(vm: AppViewModel) {
                 is Load.Failed -> item { ErrorState(feed.message, onRetry = { vm.loadFeed(force = true) }) }
                 is Load.Ready -> {
                     items(feed.data, key = { it.url }) { video ->
+                        LaunchedEffect(video.url) { vm.onImpression(video.url) }
                         VideoCard(video, onClick = { vm.open(video) })
                     }
                     if (vm.feedToken != null) {
