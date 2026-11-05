@@ -29,6 +29,15 @@ class Quality(
     val audio: AudioStream?
 )
 
+/** One caption file of a video: [mime] is "text/vtt" or "application/ttml+xml". */
+class SubtitleTrack(
+    val url: String,
+    val mime: String,
+    val language: String,
+    val label: String,
+    val auto: Boolean
+)
+
 class PlayableInfo(
     val url: String,
     val title: String,
@@ -46,7 +55,9 @@ class PlayableInfo(
     val channelAvatar: String? = null,
     val audios: List<AudioStream> = emptyList(),
     /** Set when this is a download kept inside the app: the file to play, no internet needed. */
-    val localUri: String? = null
+    val localUri: String? = null,
+    /** Caption files (creator-made and auto-generated), one per language. */
+    val subtitles: List<SubtitleTrack> = emptyList()
 )
 
 class SearchPage(
