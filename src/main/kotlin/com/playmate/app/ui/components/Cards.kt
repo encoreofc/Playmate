@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -140,7 +141,11 @@ private fun ChannelDot(item: VideoItem, modifier: Modifier = Modifier) {
 
 /** The three-dot menu of a card: real actions only. */
 @Composable
-private fun MoreMenu(item: VideoItem, modifier: Modifier = Modifier) {
+private fun MoreMenu(
+    item: VideoItem,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onSurface
+) {
     var open by remember { mutableStateOf(false) }
     val context = LocalContext.current
     Box(modifier) {
@@ -148,7 +153,7 @@ private fun MoreMenu(item: VideoItem, modifier: Modifier = Modifier) {
             Icon(
                 Icons.Rounded.MoreVert,
                 contentDescription = "More",
-                tint = MaterialTheme.colorScheme.onSurface
+                tint = tint
             )
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -212,7 +217,7 @@ fun VideoCard(item: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifie
     }
 }
 
-/** YouTube's "Shorts" shelf: a heading and a sideways row of tall cards. */
+/** YouTube's "Shorts" shelf: the real Shorts logo + heading, then a sideways row of tall cards. */
 @Composable
 fun ShortsShelf(
     shorts: List<VideoItem>,
@@ -220,19 +225,21 @@ fun ShortsShelf(
     onShown: (VideoItem) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier.fillMaxWidth().padding(top = 6.dp, bottom = 16.dp)) {
+    Column(modifier.fillMaxWidth().padding(top = 4.dp, bottom = 14.dp)) {
         Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Box(
-                Modifier.size(26.dp).clip(RoundedCornerShape(8.dp)).background(Accent),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-            }
-            Text("Shorts", style = MaterialTheme.typography.titleLarge)
+            ShortsLogo(28.dp)
+            Text(
+                "Shorts",
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.4).sp
+                )
+            )
         }
         LazyRow(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
@@ -242,7 +249,7 @@ fun ShortsShelf(
                 LaunchedEffect(short.url) { onShown(short) }
                 Column(
                     Modifier
-                        .width(168.dp)
+                        .width(158.dp)
                         .clickable { onOpen(short) }
                 ) {
                     Box(
@@ -261,21 +268,41 @@ fun ShortsShelf(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.matchParentSize()
                         )
-                        MoreMenu(short, Modifier.align(Alignment.TopEnd).padding(2.dp))
+                        // Soft dark fade at the bottom so the title is readable on any picture.
+                        Box(
+                            Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .height(96.dp)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f))
+                                    )
+                                )
+                        )
+                        Text(
+                            short.title,
+                            style = MaterialTheme.typography.titleSmall.bangla(FontWeight.SemiBold),
+                            color = Color.White,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
+                        )
+                        MoreMenu(
+                            short,
+                            Modifier.align(Alignment.TopEnd).padding(2.dp),
+                            tint = Color.White
+                        )
                     }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        short.title,
-                        style = MaterialTheme.typography.titleSmall.bangla(FontWeight.Medium),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
                     formatCount(short.views)?.let {
-                        Spacer(Modifier.height(2.dp))
+                        Spacer(Modifier.height(6.dp))
                         Text(
                             "$it views",
                             style = MaterialTheme.typography.bodySmall.bangla(),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 2.dp)
                         )
                     }
                 }
