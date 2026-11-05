@@ -12,8 +12,12 @@ android {
         applicationId = "com.playmate.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     // A stable signing key keeps every build installable over the previous one.
@@ -102,4 +106,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
+
+    // MP3 / FLAC / WAV / Opus conversion and joining the newer video codecs.
+    implementation("com.moizhassan.ffmpeg:ffmpeg-kit-16kb:6.1.1")
 }
