@@ -1,6 +1,7 @@
 package com.playmate.app
 
 import android.app.Application
+import com.playmate.app.data.Ffmpeg
 import com.playmate.app.data.OfflineStore
 import com.playmate.app.data.PmDownloader
 import com.playmate.app.ui.player.ShortsCache
@@ -15,5 +16,7 @@ class PlaymateApp : Application() {
         OfflineStore.init(this)
         // Opening the Shorts disk cache reads the disk; do it now, away from the screen.
         Thread { runCatching { ShortsCache.get(this) } }.start()
+        // Finds out in the background whether FFmpeg (and its MP3 encoder) is really usable.
+        Ffmpeg.warmUp()
     }
 }
