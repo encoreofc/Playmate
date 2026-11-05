@@ -40,6 +40,23 @@ object Engage {
         withContext(Dispatchers.IO) { InnerTube.post("like/removelike", target(videoId)) }
     }
 
+    // ---------------------------------------------------------------- feed feedback
+
+    /** Sends a "Not interested" / "Don't recommend this channel" token back to YouTube. */
+    suspend fun sendFeedback(token: String) {
+        withContext(Dispatchers.IO) {
+            val root = InnerTube.post(
+                "feedback",
+                JSONObject()
+                    .put("feedbackTokens", JSONArray().put(token))
+                    .put("isFeedbackTokenUnencrypted", false)
+                    .put("shouldMerge", false)
+            )
+            val processed = root.optJSONArray("feedbackResponses")?.optJSONObject(0)?.optBoolean("isProcessed", true)
+            if (processed == false) throw IOException("YouTube didn't accept the feedback")
+        }
+    }
+
     // ---------------------------------------------------------------- subscriptions
 
     suspend fun subscribe(channelId: String) {
