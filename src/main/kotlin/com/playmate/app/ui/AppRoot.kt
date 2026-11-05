@@ -38,6 +38,7 @@ import com.playmate.app.ui.home.HomeScreen
 import com.playmate.app.ui.player.PlayerScreen
 import com.playmate.app.ui.search.SearchScreen
 import com.playmate.app.ui.shorts.ShortsScreen
+import com.playmate.app.ui.components.BatteryPrompt
 
 @Composable
 fun AppRoot(vm: AppViewModel) {
@@ -155,5 +156,8 @@ fun AppRoot(vm: AppViewModel) {
         if (vm.showLogin) {
             LoginScreen(onCookies = vm::onSignedIn, onCancel = vm::cancelLogin)
         }
+
+        // Asks once to run without battery limits, so the phone never stops the sound.
+        BatteryPrompt(videoOpen = vm.playing != null)
     }
 }
