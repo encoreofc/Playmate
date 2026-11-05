@@ -1,6 +1,7 @@
 package com.playmate.app.ui.player
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -8,6 +9,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
@@ -47,8 +49,25 @@ private fun mediaItemFor(info: PlayableInfo, url: String): MediaItem =
         )
         .build()
 
-fun createPlayer(context: Context): ExoPlayer =
+/**
+ * How much is read ahead before playback may start. Playback begins after a quarter of a second of
+ * video for Shorts and under a second for normal videos (the default waits 2.5 s), and keeps a modest
+ * buffer so a swipe through many Shorts does not download far more than is watched.
+ */
+private fun loadControlFor(forShorts: Boolean): DefaultLoadControl =
+    DefaultLoadControl.Builder()
+        .setBufferDurationsMs(
+            if (forShorts) 4_000 else 15_000,
+            if (forShorts) 15_000 else 50_000,
+            if (forShorts) 250 else 800,
+            if (forShorts) 1_000 else 2_000
+        )
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .build()
+
+fun createPlayer(context: Context, forShorts: Boolean = false): ExoPlayer =
     ExoPlayer.Builder(context)
+        .setLoadControl(loadControlFor(forShorts))
         .setHandleAudioBecomingNoisy(true)
         .setWakeMode(C.WAKE_MODE_NETWORK)
         .setAudioAttributes(
@@ -60,9 +79,26 @@ fun createPlayer(context: Context): ExoPlayer =
         )
         .build()
 
-fun defaultQualityIndex(info: PlayableInfo): Int {
+/**
+ * The tallest picture worth fetching on the current connection: more on Wi-Fi, less on mobile data
+ * (a smaller picture starts sooner and costs less). The quality picker can still go higher.
+ */
+fun preferredMaxHeight(context: Context, shorts: Boolean): Int {
+    val metered = runCatching {
+        val manager = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        manager.isActiveNetworkMetered
+    }.getOrDefault(false)
+    return when {
+        shorts && metered -> 480
+        shorts -> 720
+        metered -> 720
+        else -> 1080
+    }
+}
+
+fun defaultQualityIndex(info: PlayableInfo, maxHeight: Int = 720): Int {
     if (info.qualities.isEmpty()) return -1
-    val comfortable = info.qualities.indexOfFirst { it.height <= 720 }
+    val comfortable = info.qualities.indexOfFirst { it.height <= maxHeight }
     return if (comfortable >= 0) comfortable else info.qualities.lastIndex
 }
 
