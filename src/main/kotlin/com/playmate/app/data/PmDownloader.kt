@@ -1,6 +1,8 @@
 package com.playmate.app.data
 
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.schabi.newpipe.extractor.downloader.Downloader
@@ -16,6 +18,17 @@ object PmDownloader : Downloader() {
 
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    /**
+     * For saving files. Plain HTTP/1.1 so every piece of a download gets its own connection
+     * (HTTP/2 would squeeze them all into one), with a pool big enough for all of them.
+     */
+    val downloadClient: OkHttpClient = client.newBuilder()
+        .protocols(listOf(Protocol.HTTP_1_1))
+        .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+        .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
