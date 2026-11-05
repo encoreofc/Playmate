@@ -40,6 +40,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.content.Intent
+import com.playmate.app.data.NowPlayingStore
+import com.playmate.app.ui.player.ActivePlayback
+import com.playmate.app.ui.player.PlaybackRecovery
+import com.playmate.app.ui.player.setVideoEnabled
 
 enum class Tab { Home, Search, Downloads, You }
 
@@ -102,6 +107,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var playing by mutableStateOf<Playing?>(null); private set
     var playerExpanded by mutableStateOf(true); private set
 
+    /**
+     * True for the moment after the app was reopened while the sound was still going in the
+     * background service: the player screen then picks the running playback up instead of restarting it.
+     */
+    var adoptPlayback = false
+
     /** What YouTube knows about the video on screen: reaction, channel, subscription, comments. */
     var meta by mutableStateOf<WatchMeta?>(null); private set
 
@@ -153,6 +164,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         signedIn = Session.loggedIn
         if (signedIn) loadAccount()
         loadFeed()
+        // Posted, so every property of this class is initialised before the playback is picked up.
+        viewModelScope.launch(Dispatchers.Main) { restoreRunningPlayback() }
+    }
+
+    /**
+     * The app was swiped away but the service kept playing (or the system brought the sound back
+     * from the lock screen): show the mini player again for what is still playing.
+     */
+    private fun restoreRunningPlayback() {
+        val player = PlayerHolder.peek() ?: return
+        if (player.mediaItemCount == 0) return
+        if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) return
+        val snapshot = NowPlayingStore.read(getApplication()) ?: return
+        if (player.currentMediaItem?.mediaId != snapshot.url) return
+        val seed = VideoItem(
+            url = snapshot.url,
+            title = snapshot.title,
+            channel = snapshot.channel,
+            durationSec = snapshot.durationSec,
+            views = 0L,
+            thumb = snapshot.thumb,
+            uploaded = null,
+            live = snapshot.live
+        )
+        adoptPlayback = true
+        open(seed)
+        playerExpanded = false
     }
 
     fun select(target: Tab) {
@@ -659,6 +697,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         playing = null
         playerExpanded = true
         resetWatchExtras()
+        stopBackgroundPlayback()
+    }
+
+    /** The one place where playback really ends: the person closed the player. */
+    private fun stopBackgroundPlayback() {
+        val app = getApplication<Application>()
+        adoptPlayback = false
+        PlayerHolder.peek()?.let { player ->
+            player.stop()
+            player.clearMediaItems()
+            player.setVideoEnabled(true)
+        }
+        PlaybackRecovery.reset()
+        ActivePlayback.clear()
+        NowPlayingStore.clear(app)
+        runCatching { app.stopService(Intent(app, PlaybackService::class.java)) }
     }
 
     // ---------------------------------------------------------------- the video's own page: reactions, channel, save
