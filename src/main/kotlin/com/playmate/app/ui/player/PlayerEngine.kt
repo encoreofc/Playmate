@@ -7,11 +7,13 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -19,6 +21,8 @@ import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.PmDownloader
 import com.playmate.app.data.SubtitleTrack
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 /** One player for the whole app, shared by the UI and the background PlaybackService. */
 object PlayerHolder {
@@ -29,6 +33,46 @@ object PlayerHolder {
         instance ?: synchronized(this) {
             instance ?: createPlayer(context.applicationContext).also { instance = it }
         }
+
+    /** The running player, or null if none was created yet. Unlike [get] it never creates one. */
+    fun peek(): ExoPlayer? = instance
+}
+
+/**
+ * What the one shared player is playing right now: the stream list and the picked quality.
+ * The background service reads it to get fresh links when YouTube's links expire.
+ */
+object ActivePlayback {
+    var info: PlayableInfo? = null
+        private set
+    var quality: Int = -1
+        private set
+
+    fun set(info: PlayableInfo, quality: Int) {
+        this.info = info
+        this.quality = quality
+    }
+
+    fun setQuality(quality: Int) {
+        this.quality = quality
+    }
+
+    fun clear() {
+        info = null
+        quality = -1
+    }
+}
+
+/**
+ * The network client used for playback. Shorter timeouts than the extractor's client: a dead
+ * connection is noticed in seconds, so the recovery in PlaybackService can reopen it quickly.
+ */
+val playbackClient: OkHttpClient by lazy {
+    PmDownloader.client.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
 }
 
 /** Turns the video renderer off in the background (audio keeps playing, saves data). */
@@ -41,6 +85,7 @@ fun ExoPlayer.setVideoEnabled(enabled: Boolean) {
 
 private fun mediaItemFor(info: PlayableInfo, url: String): MediaItem =
     MediaItem.Builder()
+        .setMediaId(info.url)
         .setUri(url)
         .setMediaMetadata(
             MediaMetadata.Builder()
@@ -61,16 +106,30 @@ private fun loadControlFor(forShorts: Boolean): DefaultLoadControl =
         .setBufferDurationsMs(
             // Shorts: three players sit side by side, so each keeps only a few seconds. A neighbour must
             // not hog the connection that the Short on screen needs.
-            if (forShorts) 2_000 else 15_000,
-            if (forShorts) 8_000 else 50_000,
+            // Normal videos: a longer cushion (30 s to 60 s) so a weak or switching network does not stop
+            // the sound; in the background only the audio is loaded, so the cushion costs very little.
+            if (forShorts) 2_000 else 30_000,
+            if (forShorts) 8_000 else 60_000,
             if (forShorts) 250 else 800,
-            if (forShorts) 800 else 2_000
+            if (forShorts) 800 else 3_000
         )
+        // Caps the memory a long cushion of a high-quality picture may take.
+        .setTargetBufferBytes(if (forShorts) C.LENGTH_UNSET else 40 * 1024 * 1024)
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
 
 fun createPlayer(context: Context, forShorts: Boolean = false): ExoPlayer =
     ExoPlayer.Builder(context)
+        .setMediaSourceFactory(
+            // Used for plain-URL items (playback resumed after the app was killed): same client and
+            // user agent as the rest, and local files work too.
+            DefaultMediaSourceFactory(
+                DefaultDataSource.Factory(
+                    context,
+                    OkHttpDataSource.Factory(playbackClient).setUserAgent(PmDownloader.USER_AGENT)
+                )
+            )
+        )
         .setLoadControl(loadControlFor(forShorts))
         .setHandleAudioBecomingNoisy(true)
         .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -120,7 +179,7 @@ fun buildSource(
     }
 
     val http: androidx.media3.datasource.DataSource.Factory = cache
-        ?: OkHttpDataSource.Factory(PmDownloader.client).setUserAgent(PmDownloader.USER_AGENT)
+        ?: OkHttpDataSource.Factory(playbackClient).setUserAgent(PmDownloader.USER_AGENT)
 
     if (info.live && info.hlsUrl != null) {
         return HlsMediaSource.Factory(http).createMediaSource(mediaItemFor(info, info.hlsUrl))
@@ -149,4 +208,18 @@ fun buildSource(
             C.TIME_UNSET
         )
     return MergingMediaSource(picture, captions)
+}
+
+/**
+ * A plain audio item for [info], used to bring playback back after the app was killed
+ * (there is no picture then, only the sound). Null when the video has no usable stream.
+ */
+fun audioOnlyItem(info: PlayableInfo): MediaItem? {
+    val uri: String? = when {
+        info.localUri != null -> info.localUri
+        info.live && info.hlsUrl != null -> info.hlsUrl
+        else -> info.audioOnly?.content ?: info.qualities.lastOrNull()?.video?.content
+    }
+    if (uri == null) return null
+    return mediaItemFor(info, uri)
 }
