@@ -89,6 +89,7 @@ import coil.compose.AsyncImage
 import com.playmate.app.AppViewModel
 import com.playmate.app.PlaybackService
 import com.playmate.app.data.Load
+import com.playmate.app.data.NowPlayingStore
 import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.Playing
 import com.playmate.app.data.VideoItem
@@ -102,6 +103,7 @@ import com.playmate.app.ui.components.metaLine
 import com.playmate.app.ui.theme.Accent
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+import androidx.media3.common.C
 
 private val Speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 
@@ -172,6 +174,7 @@ fun PlayerScreen(
                 val resumeAt = player.currentPosition
                 val resume = player.playWhenReady
                 qualityIndex = index
+                ActivePlayback.set(current, index)
                 playbackError = null
                 player.setMediaSource(source, resumeAt)
                 player.prepare()
@@ -182,23 +185,69 @@ fun PlayerScreen(
     val latestSwitch by rememberUpdatedState(switchQuality)
     val latestInfo by rememberUpdatedState(info)
     val latestQuality by rememberUpdatedState(qualityIndex)
+    val handleFatal: (PlaybackException) -> Unit = { error ->
+        val current = latestInfo
+        val index = latestQuality
+        if (current != null && !current.live && fallbacks < 2 && index < current.qualities.lastIndex) {
+            fallbacks++
+            latestSwitch(index + 1)
+        } else {
+            playbackError = "Playback failed (${error.errorCodeName})."
+        }
+    }
+    val latestFatal by rememberUpdatedState(handleFatal)
 
     LaunchedEffect(info) {
         if (info == null) {
-            player.stop()
-            player.clearMediaItems()
+            // Just reopened while the sound was still playing from the background service: leave it alone.
+            if (!vm.adoptPlayback) {
+                player.stop()
+                player.clearMediaItems()
+            }
             firstFrame = false
             return@LaunchedEffect
         }
         firstFrame = false
         playbackError = null
         fallbacks = 0
+        PlaybackRecovery.reset()
+
+        // The app was reopened and this very video is still playing: pick it up without a restart.
+        val adopting = vm.adoptPlayback &&
+            player.mediaItemCount > 0 &&
+            player.currentMediaItem?.mediaId == info.url
+        vm.adoptPlayback = false
+        if (adopting) {
+            val known = ActivePlayback.quality
+            if (ActivePlayback.info?.url == info.url && known in info.qualities.indices) {
+                // Same process, same streams: keep playing as is, only refresh the links for later switches.
+                qualityIndex = known
+                ActivePlayback.set(info, known)
+            } else {
+                // Sound-only playback (resumed after the app was killed): bring the picture back at the same second.
+                val index = defaultQualityIndex(info)
+                qualityIndex = index
+                val resumeSource = buildSource(info, index)
+                if (resumeSource != null) {
+                    val at = player.currentPosition
+                    val go = player.playWhenReady
+                    player.setMediaSource(resumeSource, if (info.live) C.TIME_UNSET else at)
+                    player.prepare()
+                    player.playWhenReady = go
+                    ActivePlayback.set(info, index)
+                }
+            }
+            return@LaunchedEffect
+        }
+
         val index = defaultQualityIndex(info)
         qualityIndex = index
         val source = buildSource(info, index)
         if (source == null) {
             playbackError = "No playable stream was found for this video."
         } else {
+            ActivePlayback.set(info, index)
+            NowPlayingStore.save(context, info, playing.seed.durationSec)
             player.setMediaSource(source)
             player.prepare()
             player.setPlaybackSpeed(speed)
@@ -223,28 +272,31 @@ fun PlayerScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                val current = latestInfo
-                val index = latestQuality
-                if (current != null && !current.live && fallbacks < 2 && index < current.qualities.lastIndex) {
-                    fallbacks++
-                    latestSwitch(index + 1)
-                } else {
-                    playbackError = "Playback failed (${error.errorCodeName})."
-                }
+                // Network trouble and expired links are repaired by the background service
+                // (retries, waits for the network, fresh links). Only the rest is handled here.
+                if (PlaybackRecovery.isRecoverable(error)) return
+                latestFatal(error)
             }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
 
+    // The service tried everything and gave up: lower the quality, or show the error.
+    val gaveUp = PlaybackRecovery.gaveUp
+    LaunchedEffect(gaveUp) {
+        if (gaveUp != null) {
+            PlaybackRecovery.reset()
+            latestFatal(gaveUp)
+        }
+    }
+
     DisposableEffect(Unit) {
         val serviceIntent = Intent(context, PlaybackService::class.java)
         runCatching { context.startService(serviceIntent) }
+        // No stop here: this runs when the app is swiped away too, and the sound must go on then.
+        // Closing the player (AppViewModel.closePlayer) is what stops playback and the service.
         onDispose {
-            player.stop()
-            player.clearMediaItems()
-            player.setVideoEnabled(true)
-            runCatching { context.stopService(serviceIntent) }
             activity?.let {
                 it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 val attrs = it.window.attributes
