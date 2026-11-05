@@ -333,6 +333,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         signedIn = false
         account = null
         subscriptions.clear()
+        shortMetas.clear()
         meta = meta?.copy(reaction = Reaction.None, subscribed = null)
         finishWatch()
         historyNote = null
@@ -544,12 +545,59 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         shorts = ShortsLaunch(items, index.coerceIn(0, items.lastIndex))
     }
 
+    /** Page data (like count, channel, subscription) of Shorts that are about to come on screen. */
+    private val shortMetas = mutableStateMapOf<String, WatchMeta>()
+    private val shortMetaLoading = HashSet<String>()
+
+    /** The page data of a Short that was fetched ahead of time, or null while it is still on its way. */
+    fun cachedMeta(videoId: String?): WatchMeta? = videoId?.let { shortMetas[it] }
+
+    /**
+     * Fetches the page data of a Short before it is on screen, so its like count, channel and
+     * Subscribe button are already there when the viewer swipes to it.
+     */
+    fun preloadMeta(videoId: String) {
+        if (shortMetas.containsKey(videoId) || !shortMetaLoading.add(videoId)) return
+        viewModelScope.launch {
+            attempt { Engage.watchMeta(videoId) }.onSuccess { m ->
+                shortMetas[videoId] = m
+                if (shortMetas.size > SHORT_META_KEEP) {
+                    shortMetas.keys.firstOrNull { it != shortFocus && it != videoId }?.let { shortMetas.remove(it) }
+                }
+                val channelId = m.channelId
+                val subscribed = m.subscribed
+                if (channelId != null && subscribed != null && !subscriptions.containsKey(channelId)) {
+                    subscriptions[channelId] = subscribed
+                }
+            }
+            shortMetaLoading.remove(videoId)
+        }
+    }
+
+    /** Keeps the fetched-ahead copy of the Short on screen in step with a like or dislike. */
+    private fun syncShortMeta() {
+        val current = meta ?: return
+        if (shortMetas.containsKey(current.videoId)) shortMetas[current.videoId] = current
+    }
+
     /** The Short that is now on screen: loads its reactions, channel and comment entry. */
     fun focusShort(item: VideoItem) {
         val id = videoIdOf(item.url) ?: return
         if (shortFocus == id) return
         shortFocus = id
         resetWatchExtras()
+        val ready = shortMetas[id]
+        if (ready != null) {
+            // Fetched ahead of time: nothing to wait for.
+            meta = ready
+            commentsTotal = ready.commentCount
+            val channelId = ready.channelId
+            val subscribed = ready.subscribed
+            if (channelId != null && subscribed != null && !subscriptions.containsKey(channelId)) {
+                subscriptions[channelId] = subscribed
+            }
+            return
+        }
         meta = WatchMeta.blank(id)
         metaJob = viewModelScope.launch {
             attempt { Engage.watchMeta(id) }.onSuccess { m ->
@@ -566,6 +614,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun closeShorts() {
         shorts = null
         shortFocus = null
+        shortMetas.clear()
+        shortMetaLoading.clear()
         resetWatchExtras()
         // Back to the normal video that was playing before: its page data comes back too.
         playing?.seed?.let { seed ->
@@ -663,6 +713,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!ensureSignedIn("like or dislike videos")) return
         val next = if (current.reaction == target) Reaction.None else target
         meta = current.copy(reaction = next, likeCount = bumpedCount(current.likeCount, current.reaction, next))
+        syncShortMeta()
         viewModelScope.launch {
             attempt {
                 when (next) {
@@ -671,7 +722,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     Reaction.None -> Engage.clearReaction(current.videoId)
                 }
             }.onFailure {
-                if (meta?.videoId == current.videoId) meta = current
+                if (meta?.videoId == current.videoId) {
+                    meta = current
+                    syncShortMeta()
+                }
                 toast = "Couldn't update your reaction: ${it.message ?: "unknown error"}"
             }
         }
@@ -991,5 +1045,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val MIN_FRESH = 6
+
+        /** How many fetched-ahead Short pages are kept while the Shorts screen is open. */
+        const val SHORT_META_KEEP = 24
     }
 }
