@@ -1,7 +1,14 @@
 package com.playmate.app.data
 
+import android.os.SystemClock
 import androidx.core.text.HtmlCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.InfoItem
 import org.schabi.newpipe.extractor.MediaFormat
@@ -45,7 +52,70 @@ object YouTubeRepo {
         SearchPage(page.items + fresh, result.nextPage, page.handler)
     }
 
-    suspend fun load(url: String): PlayableInfo = withContext(Dispatchers.IO) {
+    // ------------------------------------------------------------------ stream cache
+
+    private class Cached(val info: PlayableInfo, val at: Long)
+
+    private val cacheLock = Any()
+
+    /** Recently looked-up streams, so opening a video (or swiping back to a Short) needs no new lookup. */
+    private val cache = object : LinkedHashMap<String, Cached>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Cached>?): Boolean =
+            size > CACHE_SIZE
+    }
+
+    /** Lookups in progress, shared: two callers asking for the same link wait for one lookup. */
+    private val pending = HashMap<String, Deferred<PlayableInfo>>()
+
+    /** The lookups run in their own scope, so a caller that stops waiting does not throw the work away. */
+    private val lookups = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private const val CACHE_SIZE = 48
+
+    /** Stream links stay valid for hours; this is far inside that. */
+    private const val CACHE_TTL_MS = 20 * 60 * 1000L
+
+    /** Starts a lookup in the background so a later [load] of the same link is instant. Failures are ignored. */
+    fun prefetch(url: String) {
+        lookups.launch { runCatching { load(url) } }
+    }
+
+    /** Forgets a link's streams, so the next [load] asks again (used when a stored link stopped working). */
+    fun invalidate(url: String) {
+        synchronized(cacheLock) { cache.remove(url) }
+    }
+
+    suspend fun load(url: String): PlayableInfo {
+        synchronized(cacheLock) {
+            val hit = cache[url]
+            if (hit != null) {
+                if (SystemClock.elapsedRealtime() - hit.at < CACHE_TTL_MS) return hit.info
+                cache.remove(url)
+            }
+        }
+        val shared: Pair<Deferred<PlayableInfo>, Boolean> = synchronized(cacheLock) {
+            val running = pending[url]
+            if (running != null) {
+                running to false
+            } else {
+                val lookup = lookups.async(start = CoroutineStart.LAZY) {
+                    try {
+                        fetch(url).also { found ->
+                            synchronized(cacheLock) { cache[url] = Cached(found, SystemClock.elapsedRealtime()) }
+                        }
+                    } finally {
+                        synchronized(cacheLock) { pending.remove(url) }
+                    }
+                }
+                pending[url] = lookup
+                lookup to true
+            }
+        }
+        if (shared.second) shared.first.start()
+        return shared.first.await()
+    }
+
+    private suspend fun fetch(url: String): PlayableInfo = withContext(Dispatchers.IO) {
         val info = StreamInfo.getInfo(service, url)
         val progressive = DeliveryMethod.PROGRESSIVE_HTTP
 
