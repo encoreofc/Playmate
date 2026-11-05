@@ -17,9 +17,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.NotInterested
 import androidx.compose.material.icons.rounded.SaveAlt
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -34,12 +38,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.playmate.app.data.PlayableInfo
+import com.playmate.app.data.SubtitleTrack
 
 private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 
+/** Daily limits offered by the Shorts timer, in minutes; 0 is "off". */
+private val LIMITS = listOf(0, 15, 30, 45, 60, 90)
+
 /**
- * The "more" sheet of the Shorts screen: playback speed, picture quality of the Short on screen, and
- * the two ways to keep it (inside the app, or in the phone's own storage).
+ * The "more" sheet of the Shorts screen: playback speed, picture quality and captions of the Short on
+ * screen, clear screen, saving to a playlist, the two ways to keep it (inside the app, or in the phone's
+ * own storage), "Not interested" feedback and the daily Shorts timer.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,7 +60,16 @@ fun ShortsMoreSheet(
     onSpeed: (Float) -> Unit,
     onDownload: () -> Unit,
     onSaveToPhone: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    captionLang: String? = null,
+    onCaption: (String?) -> Unit = {},
+    onClearScreen: () -> Unit = {},
+    onSaveToPlaylist: () -> Unit = {},
+    onNotInterested: () -> Unit = {},
+    onDontRecommend: () -> Unit = {},
+    limitMin: Int = 0,
+    usedMinutes: Int = 0,
+    onLimit: (Int) -> Unit = {}
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -112,6 +130,47 @@ fun ShortsMoreSheet(
                 }
             }
 
+            SectionLabel("Captions")
+            val tracks = info?.subtitles.orEmpty()
+            if (tracks.isEmpty()) {
+                Text(
+                    if (info == null) "Loading…" else "No captions for this Short.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                )
+            } else {
+                Row(
+                    Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    SpeedChip("Off", selected = captionLang == null) { onCaption(null) }
+                    tracks.distinctBy { it.language }.forEach { track ->
+                        SpeedChip(captionLabel(track, tracks), selected = captionLang == track.language) {
+                            onCaption(track.language)
+                        }
+                    }
+                }
+            }
+
+            SectionLabel("View")
+            ActionRow(
+                icon = Icons.Rounded.VisibilityOff,
+                title = "Clear screen",
+                subtitle = "Hide every icon and line of text. Tap the screen to bring them back",
+                enabled = true,
+                onClick = onClearScreen
+            )
+            ActionRow(
+                icon = Icons.Rounded.Add,
+                title = "Save to playlist",
+                subtitle = "Watch later or one of your playlists",
+                enabled = info != null,
+                onClick = onSaveToPlaylist
+            )
+
             SectionLabel("Keep this Short")
             val canKeep = info != null && !info.live
             ActionRow(
@@ -128,8 +187,51 @@ fun ShortsMoreSheet(
                 enabled = canKeep,
                 onClick = onSaveToPhone
             )
+
+            SectionLabel("Your feed")
+            ActionRow(
+                icon = Icons.Rounded.NotInterested,
+                title = "Not interested",
+                subtitle = "Show fewer Shorts like this",
+                enabled = true,
+                onClick = onNotInterested
+            )
+            ActionRow(
+                icon = Icons.Rounded.Block,
+                title = "Don't recommend this channel",
+                subtitle = "Show fewer Shorts from this channel",
+                enabled = true,
+                onClick = onDontRecommend
+            )
+
+            SectionLabel("Shorts timer")
+            Row(
+                Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                LIMITS.forEach { minutes ->
+                    SpeedChip(if (minutes == 0) "Off" else "$minutes min", selected = minutes == limitMin) {
+                        onLimit(minutes)
+                    }
+                }
+            }
+            Text(
+                if (limitMin > 0) "Daily limit. Watched today: $usedMinutes min" else "A reminder to take a break once you reach a daily limit",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+            )
         }
     }
+}
+
+/** The language name, with "(auto-generated)" when every track in that language is made by YouTube. */
+private fun captionLabel(track: SubtitleTrack, all: List<SubtitleTrack>): String {
+    val sameLanguage = all.filter { it.language == track.language }
+    val autoOnly = sameLanguage.all { it.auto }
+    return if (autoOnly) "${track.label} (auto)" else track.label
 }
 
 private fun speedLabel(value: Float): String =
