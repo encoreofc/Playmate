@@ -17,7 +17,6 @@ import androidx.compose.ui.unit.dp
 import com.playmate.app.AppViewModel
 import com.playmate.app.Tab
 import com.playmate.app.data.Load
-import com.playmate.app.data.SaveCenter
 import com.playmate.app.ui.account.LoginScreen
 import com.playmate.app.ui.account.YouScreen
 import com.playmate.app.ui.channel.ChannelScreen
@@ -28,13 +27,13 @@ import com.playmate.app.ui.home.HomeScreen
 import com.playmate.app.ui.player.PlayerScreen
 import com.playmate.app.ui.search.SearchScreen
 import com.playmate.app.ui.shorts.ShortsScreen
+import com.playmate.app.ui.subscriptions.SubscriptionsScreen
 import com.playmate.app.ui.components.BatteryPrompt
 
 @Composable
 fun AppRoot(vm: AppViewModel) {
     val playerOnScreen = vm.playing != null && vm.playerExpanded
     val context = LocalContext.current
-    val activeDownloads = SaveCenter.jobs.count { it.offline && it.running }
 
     // Messages from actions (sign in needed, a like that failed...) show as a short toast.
     LaunchedEffect(vm.toast) {
@@ -69,7 +68,6 @@ fun AppRoot(vm: AppViewModel) {
                         tab = vm.tab,
                         signedIn = vm.signedIn,
                         avatar = vm.account?.avatar,
-                        activeDownloads = activeDownloads,
                         onHome = { vm.select(Tab.Home) },
                         onShorts = {
                             val shorts = (vm.feed as? Load.Ready)?.data?.filter { it.isShort }.orEmpty()
@@ -79,7 +77,7 @@ fun AppRoot(vm: AppViewModel) {
                                 vm.openShorts(shorts, 0)
                             }
                         },
-                        onDownloads = { vm.select(Tab.Downloads) },
+                        onSubscriptions = { vm.select(Tab.Subscriptions) },
                         onYou = { vm.select(Tab.You) }
                     )
                 }
@@ -92,6 +90,7 @@ fun AppRoot(vm: AppViewModel) {
                     when (vm.tab) {
                         Tab.Home -> HomeScreen(vm)
                         Tab.Search -> SearchScreen(vm)
+                        Tab.Subscriptions -> SubscriptionsScreen(vm)
                         Tab.Downloads -> DownloadsScreen(vm)
                         Tab.You -> YouScreen(vm)
                     }
