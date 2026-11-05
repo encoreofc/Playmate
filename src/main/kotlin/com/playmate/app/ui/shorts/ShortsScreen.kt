@@ -213,15 +213,16 @@ fun ShortsScreen(launch: ShortsLaunch, vm: AppViewModel) {
         snapPositionalThreshold = 0.3f
     )
 
-    // A page takes over the moment it is more than half on screen, not when the scroll has stopped.
+    // A page takes over the moment it is more than half on screen, not when the scroll has stopped:
+    // only the picture and sound switch here. Everything else waits for the scroll to come to rest.
     LaunchedEffect(pager, controller) {
-        snapshotFlow { pager.currentPage }.collect { page ->
-            controller.onPage(page)
-            controller.items.getOrNull(page)?.let { vm.focusShort(it) }
-        }
+        snapshotFlow { pager.currentPage }.collect { page -> controller.onPage(page) }
     }
     LaunchedEffect(pager, controller) {
-        snapshotFlow { pager.settledPage }.collect { page -> controller.onSettled(page) }
+        snapshotFlow { pager.settledPage }.collect { page ->
+            controller.onSettled(page)
+            controller.items.getOrNull(page)?.let { vm.focusShort(it) }
+        }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -346,42 +347,13 @@ private fun ShortPage(
         }
     }
 
-    val thumbAlpha by animateFloatAsState(
-        targetValue = if (mine && slot.firstFrame && error == null) 0f else 1f,
-        animationSpec = tween(120),
-        label = "thumb"
-    )
-
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        // The picture: fills the screen when the video is close to 9:16, otherwise fits inside it.
-        BoxWithConstraints(Modifier.fillMaxSize().clipToBounds()) {
-            val boxAspect = maxWidth / maxHeight
-            val aspect = if (mine) slot.aspect else 0f
-            var w = maxWidth
-            var h = maxHeight
-            if (aspect > 0f) {
-                val crop = if (aspect >= boxAspect) 1f - boxAspect / aspect else 1f - aspect / boxAspect
-                val zoom = aspect < 1f && crop <= 0.25f
-                val wide = aspect >= boxAspect
-                if (zoom == wide) {
-                    h = maxHeight
-                    w = maxHeight * aspect
-                } else {
-                    w = maxWidth
-                    h = maxWidth / aspect
-                }
-            }
-            AndroidView(
-                factory = { textureView },
-                modifier = Modifier.align(Alignment.Center).requiredSize(w, h)
-            )
-        }
-
-        AsyncImage(
-            model = item.thumb,
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize().graphicsLayer { alpha = thumbAlpha }
+        ShortPicture(
+            slot = slot,
+            mine = mine,
+            thumb = item.thumb,
+            failed = error != null,
+            textureView = textureView
         )
 
         // Fades so white text stays readable on any picture.
@@ -637,6 +609,62 @@ private fun ShortPage(
                 SkeletonBar(width = 150.dp, height = 12.dp)
             }
         }
+    }
+}
+
+/**
+ * The picture of one Short: the video, with its thumbnail over it until the first frame is on screen.
+ *
+ * It lives in its own composable so the state it reads (picture shape, first frame) only redraws this
+ * and never the whole page. The shape is known before the player has decoded anything (from the stream
+ * list), and until it is, a Short is taken to be vertical and fills the screen, so the thumbnail and the
+ * video occupy exactly the same place and nothing jumps when the video arrives.
+ */
+@Composable
+private fun ShortPicture(
+    slot: ShortsController.Slot,
+    mine: Boolean,
+    thumb: String?,
+    failed: Boolean,
+    textureView: TextureView
+) {
+    val thumbAlpha by animateFloatAsState(
+        targetValue = if (mine && slot.firstFrame && !failed) 0f else 1f,
+        animationSpec = tween(120),
+        label = "thumb"
+    )
+    BoxWithConstraints(Modifier.fillMaxSize().clipToBounds()) {
+        val boxAspect = maxWidth / maxHeight
+        val measured = if (mine) slot.aspect.takeIf { it > 0f } ?: slot.knownAspect else 0f
+        val aspect = if (measured > 0f) measured else 9f / 16f
+
+        // Fills the screen when the video is close to 9:16 (a little is cropped), otherwise fits inside it.
+        val crop = if (aspect >= boxAspect) 1f - boxAspect / aspect else 1f - aspect / boxAspect
+        val zoom = aspect < 1f && crop <= 0.25f
+        val wide = aspect >= boxAspect
+        val w: Dp
+        val h: Dp
+        if (zoom == wide) {
+            h = maxHeight
+            w = maxHeight * aspect
+        } else {
+            w = maxWidth
+            h = maxWidth / aspect
+        }
+
+        AndroidView(
+            factory = { textureView },
+            modifier = Modifier.align(Alignment.Center).requiredSize(w, h)
+        )
+        AsyncImage(
+            model = thumb,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .requiredSize(w, h)
+                .graphicsLayer { alpha = thumbAlpha }
+        )
     }
 }
 
