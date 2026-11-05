@@ -1,6 +1,7 @@
 package com.playmate.app.ui.shorts
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -9,16 +10,22 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.ExoPlayer
+import com.playmate.app.data.Engage
 import com.playmate.app.data.InnerTube
 import com.playmate.app.data.Load
 import com.playmate.app.data.PlayableInfo
+import com.playmate.app.data.PlaybackPrefs
 import com.playmate.app.data.SearchPage
 import com.playmate.app.data.Session
+import com.playmate.app.data.ShortFeedback
 import com.playmate.app.data.ShortsFeed
+import com.playmate.app.data.SubtitleTrack
 import com.playmate.app.data.VideoItem
 import com.playmate.app.data.YouTubeRepo
 import com.playmate.app.data.attempt
@@ -82,6 +89,9 @@ class ShortsController(
         var error by mutableStateOf<String?>(null)
         var quality by mutableIntStateOf(-1)
         var retries = 0
+
+        /** The caption line on screen right now ("" when there is none). */
+        var caption by mutableStateOf("")
     }
 
     private val appContext = context.applicationContext
@@ -108,6 +118,32 @@ class ShortsController(
         private set
     var scrubbing by mutableStateOf(false)
         private set
+
+    /** Held on a screen edge: the Short plays at 2x until the finger lifts. */
+    var boosting by mutableStateOf(false)
+        private set
+
+    /** Hold, then swipe down: 2x stays on for the rest of this Short. */
+    var boostLocked by mutableStateOf(false)
+        private set
+
+    /** Clear screen mode: every icon and line of text is hidden, only the picture stays. */
+    var clearScreen by mutableStateOf(false)
+        private set
+
+    /** The caption language picked for Shorts, or null while captions are off. */
+    var captionLang by mutableStateOf(PlaybackPrefs.shortsCaptionLang(appContext))
+        private set
+
+    // Shorts timer: a daily limit in minutes (0 = none), and the "take a break" reminder.
+    var limitMin by mutableIntStateOf(PlaybackPrefs.shortsLimitMin(appContext))
+        private set
+    var breakDue by mutableStateOf(false)
+        private set
+    private var usedMs = PlaybackPrefs.shortsUsedMs(appContext)
+    private var reminded = PlaybackPrefs.shortsReminded(appContext)
+    private var lastTrackAt = 0L
+    private var unsavedMs = 0L
 
     private val ids = HashSet<String>().apply { initial.forEach { idOf(it)?.let(::add) } }
 
@@ -153,9 +189,15 @@ class ShortsController(
         if (page !in items.indices) return
         val previous = current
         current = page
-        paused = false
+        paused = breakDue
         progress = 0f
         scrubbing = false
+        // 2x belongs to the Short it was started on; the next one plays at its normal speed.
+        if (boosting || boostLocked) {
+            boosting = false
+            boostLocked = false
+            applySpeed()
+        }
         if (previous != page) rewind(previous)
         if (!started) {
             started = true
@@ -187,7 +229,132 @@ class ShortsController(
 
     fun setSpeed(value: Float) {
         speedState = value
+        applySpeed()
+    }
+
+    /** The speed the players should run at: 2x while the screen edge is held (or locked), else the chosen one. */
+    private fun effectiveSpeed(): Float = if (boosting || boostLocked) BOOST_SPEED else speedState
+
+    private fun applySpeed() {
+        val value = effectiveSpeed()
         slots.forEach { it.player.setPlaybackSpeed(value) }
+    }
+
+    /** A finger is held on the edge: 2x for as long as it stays. Does nothing on a paused Short. */
+    fun boostStart() {
+        if (paused) return
+        boosting = true
+        applySpeed()
+    }
+
+    /** The finger lifted. */
+    fun boostEnd() {
+        if (!boosting) return
+        boosting = false
+        applySpeed()
+    }
+
+    /** Swiped down while holding: 2x stays on after the finger lifts. */
+    fun boostLock() {
+        boostLocked = true
+        boosting = false
+        applySpeed()
+    }
+
+    fun boostUnlock() {
+        boostLocked = false
+        boosting = false
+        applySpeed()
+    }
+
+    fun setClearScreen(on: Boolean) {
+        clearScreen = on
+    }
+
+    // ------------------------------------------------------------------ captions
+
+    private fun trackFor(info: PlayableInfo): SubtitleTrack? {
+        val language = captionLang ?: return null
+        val tracks = info.subtitles
+        // A creator-made track beats an auto-generated one in the same language.
+        return tracks.firstOrNull { it.language == language && !it.auto }
+            ?: tracks.firstOrNull { it.language == language }
+    }
+
+    /** Turns captions on in [language] (null turns them off) for this Short and the ones around it. */
+    fun setCaptionLang(language: String?) {
+        captionLang = language
+        PlaybackPrefs.setShortsCaptionLang(appContext, language)
+        slots.forEach { it.caption = "" }
+        val currentUrl = items.getOrNull(current)?.url
+        for (slot in slots) {
+            val url = slot.url ?: continue
+            val info = (infos[url] as? Load.Ready)?.data ?: continue
+            if (slot.quality < 0) continue
+            start(slot, info, slot.quality, if (url == currentUrl) slot.player.currentPosition else 0L)
+        }
+    }
+
+    // ------------------------------------------------------------------ Shorts timer
+
+    fun usedMinutes(): Int = (usedMs / 60_000L).toInt()
+
+    /** Sets the daily limit (0 = off). A new limit can remind again today. */
+    fun setLimit(minutes: Int) {
+        limitMin = minutes.coerceAtLeast(0)
+        PlaybackPrefs.setShortsLimitMin(appContext, limitMin)
+        reminded = false
+        checkLimit()
+    }
+
+    /** The viewer tapped the reminder away: it will not come back today, and the Short plays on. */
+    fun dismissBreak() {
+        reminded = true
+        PlaybackPrefs.setShortsReminded(appContext, true)
+        breakDue = false
+        paused = false
+        applyPlayState()
+    }
+
+    /** Counts the time a Short is really playing; called every frame. */
+    private fun trackUse() {
+        val now = SystemClock.elapsedRealtime()
+        val delta = if (lastTrackAt == 0L) 0L else (now - lastTrackAt).coerceIn(0L, 500L)
+        lastTrackAt = now
+        if (delta == 0L || !foreground || paused || breakDue) return
+        if (currentSlot()?.player?.isPlaying != true) return
+        usedMs += delta
+        unsavedMs += delta
+        if (unsavedMs >= 5_000L) {
+            PlaybackPrefs.addShortsUsedMs(appContext, unsavedMs)
+            unsavedMs = 0L
+        }
+        checkLimit()
+    }
+
+    private fun checkLimit() {
+        if (limitMin <= 0 || reminded || breakDue) return
+        if (usedMs >= limitMin * 60_000L) {
+            breakDue = true
+            paused = true
+            applyPlayState()
+        }
+    }
+
+    // ------------------------------------------------------------------ "Not interested"
+
+    /**
+     * Tells YouTube "Not interested" (or, with [channelWide], "Don't recommend this channel") about the Short
+     * on screen. Returns false when there was nobody to tell: not signed in, or YouTube gave this Short no
+     * feedback option. The screen skips the Short either way.
+     */
+    fun sendFeedback(channelWide: Boolean): Boolean {
+        val id = items.getOrNull(current)?.let { idOf(it) } ?: return false
+        val tokens = ShortFeedback.get(id) ?: return false
+        val token = (if (channelWide) tokens.dontRecommend else tokens.notInterested) ?: return false
+        if (!Session.loggedIn) return false
+        reportScope.launch { attempt { Engage.sendFeedback(token) } }
+        return true
     }
 
     fun setForeground(value: Boolean) {
@@ -215,6 +382,7 @@ class ShortsController(
 
     /** Called every frame by the screen; keeps the thin progress line moving. */
     fun tick() {
+        trackUse()
         if (scrubbing || paused) return
         val slot = currentSlot() ?: return
         val duration = slot.player.duration
@@ -243,6 +411,10 @@ class ShortsController(
     }
 
     fun release() {
+        if (unsavedMs > 0L) {
+            PlaybackPrefs.addShortsUsedMs(appContext, unsavedMs)
+            unsavedMs = 0L
+        }
         finishWatch()
         warming.values.forEach { it.cancel() }
         warming.clear()
@@ -280,6 +452,7 @@ class ShortsController(
         slot.knownAspect = 0f
         slot.error = null
         slot.retries = 0
+        slot.caption = ""
         slot.quality = -1
         slot.player.stop()
         slot.player.clearMediaItems()
@@ -396,7 +569,15 @@ class ShortsController(
     }
 
     private fun start(slot: Slot, info: PlayableInfo, quality: Int, resumeMs: Long = 0L) {
-        val source = buildSource(info, quality, ShortsCache.dataSourceFactory(appContext))
+        val captions = trackFor(info)
+        val source = buildSource(info, quality, ShortsCache.dataSourceFactory(appContext), captions)
+        // The text renderer only shows what was asked for: on with a caption track, otherwise switched off.
+        slot.caption = ""
+        slot.player.trackSelectionParameters = slot.player.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, captions == null)
+            .setSelectUndeterminedTextLanguage(true)
+            .build()
         if (source == null) {
             slot.error = "No playable stream was found for this Short."
             return
@@ -407,7 +588,7 @@ class ShortsController(
             if (video.width > 0 && video.height > 0) slot.knownAspect = video.width.toFloat() / video.height
         }
         slot.player.volume = if (muted) 0f else 1f
-        slot.player.setPlaybackSpeed(speed)
+        slot.player.setPlaybackSpeed(effectiveSpeed())
         if (resumeMs > 0L) slot.player.setMediaSource(source, resumeMs) else slot.player.setMediaSource(source)
         slot.player.prepare()
         applyPlayState()
@@ -428,6 +609,10 @@ class ShortsController(
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             slot.buffering = playbackState == Player.STATE_BUFFERING
+        }
+
+        override fun onCues(cueGroup: CueGroup) {
+            slot.caption = cueGroup.cues.mapNotNull { it.text?.toString() }.joinToString("\n").trim()
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -556,6 +741,9 @@ class ShortsController(
 
     private companion object {
         const val SLOTS = 3
+
+        /** Speed while a screen edge is held. */
+        const val BOOST_SPEED = 2f
 
         /** More Shorts are added to the list when the viewer is this close to its end. */
         const val PREFETCH_AHEAD = 6
