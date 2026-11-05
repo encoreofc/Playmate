@@ -6,6 +6,7 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaMuxer
 import android.media.MediaScannerConnection
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -27,10 +28,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import java.io.File
@@ -40,6 +40,7 @@ import java.util.Collections
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import android.media.MediaFormat as TrackFormat
 
@@ -50,6 +51,20 @@ fun formatSize(bytes: Long): String = when {
     bytes < 1_000_000 -> String.format(Locale.US, "%.0f KB", bytes / 1_000.0)
     bytes < 1_000_000_000 -> String.format(Locale.US, "%.1f MB", bytes / 1_000_000.0)
     else -> String.format(Locale.US, "%.2f GB", bytes / 1_000_000_000.0)
+}
+
+fun formatSpeed(bytesPerSec: Long): String = when {
+    bytesPerSec <= 0 -> "—"
+    bytesPerSec < 1_000_000 -> String.format(Locale.US, "%.0f KB/s", bytesPerSec / 1_000.0)
+    else -> String.format(Locale.US, "%.1f MB/s", bytesPerSec / 1_000_000.0)
+}
+
+/** "" when it can't be told yet. */
+fun formatEta(seconds: Long): String = when {
+    seconds < 0 -> ""
+    seconds < 60 -> "${seconds}s left"
+    seconds < 3600 -> "${seconds / 60} min left"
+    else -> "${seconds / 3600} h ${(seconds % 3600) / 60} min left"
 }
 
 fun safeFileName(raw: String): String {
@@ -105,18 +120,24 @@ object SaveFolder {
 
 // ------------------------------------------------------------------ jobs
 
-enum class SaveState { Queued, Downloading, Joining, Saving, Done, Failed, Cancelled }
+enum class SaveState { Queued, Downloading, Joining, Saving, Done, Failed, Cancelled, Paused }
 
 class SaveJob(
     val id: Int,
     val title: String,
     val thumb: String?,
-    val target: SaveTarget,
+    target: SaveTarget,
     val name: String,
     /** True for the app's own Downloads (kept inside Playmate); false for "Save to phone". */
     val offline: Boolean = false,
-    val source: PlayableInfo? = null
+    source: PlayableInfo? = null
 ) {
+    /** What is being saved. After a restart it starts as a stand-in and becomes the real one when the download resumes. */
+    var target: SaveTarget = target
+
+    /** The video's details. After a restart it holds just the link and title until the download resumes. */
+    var source: PlayableInfo? = source
+
     var state by mutableStateOf(SaveState.Queued)
     var message by mutableStateOf<String?>(null)
     var uri by mutableStateOf<Uri?>(null)
@@ -134,29 +155,67 @@ class SaveJob(
     @Volatile
     var total: Long = 0
 
+    /** Bytes per second right now (smoothed), 0 when nothing is moving. */
+    @Volatile
+    var speed: Long = 0
+
+    /** Set while a pause is on its way: the download stops but keeps what it has. */
+    @Volatile
+    var pauseRequested: Boolean = false
+
+    /** True when the app paused it by itself (Wi-Fi only and the phone left Wi-Fi); it resumes by itself too. */
+    @Volatile
+    var autoPaused: Boolean = false
+
     var task: Job? = null
 
     val running: Boolean
         get() = state == SaveState.Queued || state == SaveState.Downloading ||
-            state == SaveState.Joining || state == SaveState.Saving
+            state == SaveState.Joining || state == SaveState.Saving || state == SaveState.Paused
 
     val percent: Int
         get() = if (total > 0) ((bytes.get() * 100) / total).toInt().coerceIn(0, 100) else 0
+
+    /** Seconds left at the current speed, or -1 when it can't be told. */
+    val etaSeconds: Long
+        get() {
+            val perSecond = speed
+            val left = total - bytes.get()
+            return if (perSecond > 0 && left > 0) left / perSecond else -1L
+        }
 }
 
 private class JoinException(cause: Throwable) : Exception(cause.message, cause)
 
 private class ConvertException(cause: Throwable) : Exception(cause.message, cause)
 
+private fun partialDir(ctx: Context): File = File(ctx.filesDir, "partial").apply { mkdirs() }
+
+/** Deletes everything a job left behind (pieces, piece maps, joined output). */
+private fun wipe(ctx: Context, id: Int) {
+    partialDir(ctx).listFiles()?.forEach { if (it.name.startsWith("$id-")) it.delete() }
+}
+
+private fun isMetered(ctx: Context): Boolean = runCatching {
+    (ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered
+}.getOrDefault(false)
+
 object SaveCenter {
     /** For screens. */
     val jobs = mutableStateListOf<SaveJob>()
 
-    /** For the notification: safe to read from any thread. */
+    /** For the notification: safe to read from any thread. Paused jobs stay in it, so the notification stays. */
     private val live = CopyOnWriteArrayList<SaveJob>()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val gate = Semaphore(2)
+
+    /** How many downloads are running right now; the limit is the person's setting. */
+    private val slots = AtomicInteger(0)
+
+    private var monitor: Job? = null
+
+    @Volatile
+    private var appContext: Context? = null
 
     fun liveJobs(): List<SaveJob> = live.toList()
 
@@ -168,40 +227,259 @@ object SaveCenter {
         offline: Boolean = false
     ): SaveJob {
         val app = context.applicationContext
+        appContext = app
         val job = SaveJob(DownloadPrefs.nextJobId(app), info.title, info.thumb, target, name, offline, info)
         jobs.add(0, job)
-        live.add(job)
-        DownloadService.start(app)
-        val task = scope.launch { gate.withPermit { execute(app, job) } }
-        job.task = task
-        task.invokeOnCompletion { live.remove(job) }
+        purgeOrphans(app)
+        begin(app, job)
         return job
     }
 
+    /** Brings back what was unfinished when the app was closed. Everything comes back paused; the person resumes it. */
+    fun restore(context: Context) {
+        val app = context.applicationContext
+        appContext = app
+        JobStore.load(app).forEach { saved ->
+            val stand = PlayableInfo(
+                url = saved.url,
+                title = saved.title,
+                channel = "",
+                views = -1,
+                uploaded = null,
+                description = "",
+                thumb = saved.thumb,
+                live = false,
+                hlsUrl = null,
+                qualities = emptyList(),
+                audioOnly = null,
+                related = emptyList()
+            )
+            val job = SaveJob(saved.id, saved.title, saved.thumb, placeholderTarget(saved.key), saved.name, saved.offline, stand)
+            job.state = SaveState.Paused
+            jobs.add(job)
+        }
+        purgeOrphans(app)
+    }
+
+    // ---------------------------------------------------------------- pause, resume, cancel
+
+    fun pause(job: SaveJob) = pauseJob(job, auto = false)
+
+    fun pauseAll() {
+        live.toList().forEach { pauseJob(it, auto = false) }
+    }
+
+    /** Carries on a paused (or failed) download from the pieces it already has. */
+    fun resume(context: Context, job: SaveJob) {
+        if (job.state != SaveState.Paused && job.state != SaveState.Failed) return
+        val app = context.applicationContext
+        appContext = app
+        begin(app, job)
+    }
+
+    fun resumeAll(context: Context) {
+        jobs.toList().filter { it.state == SaveState.Paused }.forEach { resume(context, it) }
+    }
+
     fun cancel(job: SaveJob) {
+        val active = job.task?.isActive == true
+        job.pauseRequested = false
         job.task?.cancel()
         job.calls.toList().forEach { runCatching { it.cancel() } }
         if (job.running) job.state = SaveState.Cancelled
+        if (!active) {
+            // Nothing is running to clean up after itself (it was paused), so clean up here.
+            appContext?.let { wipe(it, job.id) }
+            live.remove(job)
+            persist()
+        }
     }
 
     fun cancelAll() {
         live.toList().forEach { cancel(it) }
     }
 
-    fun clearFinished() {
-        jobs.removeAll { !it.running }
+    /** Stops a download (if it runs), forgets it and deletes the pieces it kept. */
+    fun discard(context: Context, job: SaveJob) {
+        val app = context.applicationContext
+        appContext = app
+        cancel(job)
+        jobs.remove(job)
+        wipe(app, job.id)
+        persist()
     }
 
+    fun clearFinished() {
+        jobs.removeAll { !it.running }
+        appContext?.let { purgeOrphans(it) }
+        persist()
+    }
+
+    private fun pauseJob(job: SaveJob, auto: Boolean) {
+        if (job.state != SaveState.Downloading && job.state != SaveState.Queued) return
+        job.autoPaused = auto
+        job.pauseRequested = true
+        job.task?.cancel()
+        job.calls.toList().forEach { runCatching { it.cancel() } }
+    }
+
+    // ---------------------------------------------------------------- running
+
+    private fun begin(app: Context, job: SaveJob) {
+        job.pauseRequested = false
+        job.autoPaused = false
+        job.message = null
+        job.state = SaveState.Queued
+        if (job !in live) live.add(job)
+        persist()
+        DownloadService.start(app)
+        val task = scope.launch { runJob(app, job) }
+        job.task = task
+        task.invokeOnCompletion { cause ->
+            if (job.task === task) {
+                // Stopped before its first line ran: nobody has set what state it ended in.
+                if (cause != null && job.running && job.state != SaveState.Paused) stopped(job)
+                if (job.state != SaveState.Paused) live.remove(job)
+                persist()
+            }
+        }
+        ensureMonitor()
+    }
+
+    /** What state a download that was stopped on purpose ends in: paused or cancelled. */
+    private fun stopped(job: SaveJob) {
+        if (job.pauseRequested) {
+            job.speed = 0
+            if (job.autoPaused) job.message = "Waiting for Wi-Fi"
+            job.state = SaveState.Paused
+        } else {
+            job.state = SaveState.Cancelled
+        }
+    }
+
+    private suspend fun runJob(app: Context, job: SaveJob) {
+        try {
+            waitForWifi(app, job)
+            acquire(app)
+        } catch (e: CancellationException) {
+            stopped(job)
+            if (job.state == SaveState.Cancelled) wipe(app, job.id)
+            persist()
+            throw e
+        }
+        try {
+            execute(app, job)
+        } finally {
+            slots.decrementAndGet()
+        }
+    }
+
+    /** Waits for a free place among the downloads that may run at the same time. */
+    private suspend fun acquire(app: Context) {
+        while (true) {
+            val limit = DownloadPrefs.parallel(app)
+            val now = slots.get()
+            if (now < limit && slots.compareAndSet(now, now + 1)) return
+            delay(250)
+        }
+    }
+
+    private suspend fun waitForWifi(app: Context, job: SaveJob) {
+        var told = false
+        while (DownloadPrefs.wifiOnly(app) && isMetered(app)) {
+            if (!told) {
+                job.message = "Waiting for Wi-Fi"
+                told = true
+            }
+            delay(2000)
+        }
+        if (told) job.message = null
+    }
+
+    private fun persist() {
+        val app = appContext ?: return
+        JobStore.save(app, jobs.toList().filter { it.running || it.state == SaveState.Failed })
+    }
+
+    /** Deletes pieces that belong to no download in the list (a removed one, or one from an older run). */
+    private fun purgeOrphans(app: Context) {
+        val keep = jobs.map { it.id }.toSet()
+        partialDir(app).listFiles()?.forEach { file ->
+            val id = file.name.substringBefore('-').toIntOrNull()
+            if (id == null || id !in keep) file.delete()
+        }
+    }
+
+    // ---------------------------------------------------------------- speed and network watching
+
+    @Synchronized
+    private fun ensureMonitor() {
+        if (monitor != null) return
+        monitor = scope.launch {
+            val last = HashMap<Int, Long>()
+            var tick = 0
+            while (true) {
+                delay(1000)
+                if (stopMonitor()) break
+                tick++
+                for (job in live.toList()) {
+                    val now = job.session.get()
+                    if (job.state == SaveState.Downloading) {
+                        val moved = now - (last[job.id] ?: now)
+                        job.speed = if (job.speed == 0L) moved else (job.speed * 6 + moved * 4) / 10
+                    } else {
+                        job.speed = 0
+                    }
+                    last[job.id] = now
+                }
+                if (tick % 3 == 0) checkNetwork()
+            }
+        }
+    }
+
+    @Synchronized
+    private fun stopMonitor(): Boolean {
+        if (live.isNotEmpty()) return false
+        monitor = null
+        return true
+    }
+
+    /** Wi-Fi only: when the phone leaves Wi-Fi, running downloads pause; when it comes back they carry on. */
+    private fun checkNetwork() {
+        val app = appContext ?: return
+        val blocked = DownloadPrefs.wifiOnly(app) && isMetered(app)
+        for (job in live.toList()) {
+            if (blocked && job.state == SaveState.Downloading) {
+                pauseJob(job, auto = true)
+            } else if (!blocked && job.state == SaveState.Paused && job.autoPaused) {
+                begin(app, job)
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- one download
+
     private suspend fun execute(ctx: Context, job: SaveJob) {
-        val dir = File(ctx.filesDir, "partial").apply { mkdirs() }
+        val dir = partialDir(ctx)
         val vFile = File(dir, "${job.id}-v.part")
         val vMap = File(dir, "${job.id}-v.map")
         val aFile = File(dir, "${job.id}-a.part")
         val aMap = File(dir, "${job.id}-a.map")
         val mFile = File(dir, "${job.id}-m.tmp")
         try {
-            var t = job.target
             job.state = SaveState.Downloading
+            job.message = null
+            var t = job.target
+
+            // A download restored after a restart knows only the video's link and what was chosen.
+            if (t.videoUrl == null && t.audioUrl == null) {
+                val source = job.source ?: throw IOException("This download lost its video link.")
+                val fresh = YouTubeRepo.load(source.url)
+                job.source = fresh
+                t = findTarget(saveTargetsFor(fresh), t.key)
+                    ?: throw IOException("This quality isn't offered for the video any more.")
+                job.target = t
+            }
 
             // Stream links last a few hours. If one is refused, look the video up again and carry on.
             var round = 0
@@ -216,6 +494,7 @@ object SaveCenter {
                     YouTubeRepo.invalidate(source.url)
                     val fresh = YouTubeRepo.load(source.url)
                     t = findTarget(saveTargetsFor(fresh), job.target.key) ?: throw e
+                    job.target = t
                 }
             }
 
@@ -243,20 +522,21 @@ object SaveCenter {
                 job.uri = saved.uri
                 job.place = saved.place
             }
+            job.speed = 0
             job.state = SaveState.Done
         } catch (e: CancellationException) {
-            job.state = SaveState.Cancelled
+            stopped(job)
             throw e
         } catch (e: Exception) {
+            job.speed = 0
             job.message = explain(e)
             job.state = SaveState.Failed
         } finally {
-            vFile.delete()
-            vMap.delete()
-            aFile.delete()
-            aMap.delete()
             mFile.delete()
+            // A paused or failed download keeps its pieces, so it can carry on instead of starting over.
+            if (job.state == SaveState.Done || job.state == SaveState.Cancelled) wipe(ctx, job.id)
             DownloadNotifications.finished(ctx, job)
+            persist()
         }
     }
 }
@@ -278,8 +558,16 @@ private suspend fun pull(
     job.total = listOfNotNull(vProbe, aProbe).sumOf { it.total.coerceAtLeast(0L) }
     job.bytes.set(0)
 
+    // What an earlier run already fetched does not need room again.
+    val alreadyHave = listOf(vProbe to vMap, aProbe to aMap).sumOf { (probe, map) ->
+        if (probe != null && probe.ranges && probe.total > 0) {
+            ChunkMap.load(map, probe.total, CHUNK).doneBytes()
+        } else {
+            0L
+        }
+    }
     val free = StatFs(dir.path).availableBytes
-    if (job.total > 0 && free < job.total * 2 + 64L * 1024 * 1024) {
+    if (job.total > 0 && free < job.total * 2 - alreadyHave + 64L * 1024 * 1024) {
         throw IOException("ENOSPC: not enough free space")
     }
 
