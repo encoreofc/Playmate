@@ -7,20 +7,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AccountCircle
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
@@ -28,11 +16,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.playmate.app.AppViewModel
 import com.playmate.app.Tab
+import com.playmate.app.data.Load
 import com.playmate.app.data.SaveCenter
 import com.playmate.app.ui.account.LoginScreen
 import com.playmate.app.ui.account.YouScreen
 import com.playmate.app.ui.channel.ChannelScreen
 import com.playmate.app.ui.components.MiniPlayer
+import com.playmate.app.ui.components.PmBottomBar
 import com.playmate.app.ui.downloads.DownloadsScreen
 import com.playmate.app.ui.home.HomeScreen
 import com.playmate.app.ui.player.PlayerScreen
@@ -75,50 +65,23 @@ fun AppRoot(vm: AppViewModel) {
                             )
                         }
                     }
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        tonalElevation = 0.dp
-                    ) {
-                        val colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                            indicatorColor = MaterialTheme.colorScheme.surfaceVariant,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        NavigationBarItem(
-                            selected = vm.tab == Tab.Home,
-                            onClick = { vm.select(Tab.Home) },
-                            icon = { Icon(Icons.Rounded.Home, contentDescription = null) },
-                            label = { Text("Home") },
-                            colors = colors
-                        )
-                        NavigationBarItem(
-                            selected = vm.tab == Tab.Search,
-                            onClick = { vm.select(Tab.Search) },
-                            icon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-                            label = { Text("Search") },
-                            colors = colors
-                        )
-                        NavigationBarItem(
-                            selected = vm.tab == Tab.Downloads,
-                            onClick = { vm.select(Tab.Downloads) },
-                            icon = {
-                                BadgedBox(badge = { if (activeDownloads > 0) Badge { Text("$activeDownloads") } }) {
-                                    Icon(Icons.Rounded.Download, contentDescription = null)
-                                }
-                            },
-                            label = { Text("Downloads") },
-                            colors = colors
-                        )
-                        NavigationBarItem(
-                            selected = vm.tab == Tab.You,
-                            onClick = { vm.select(Tab.You) },
-                            icon = { Icon(Icons.Rounded.AccountCircle, contentDescription = null) },
-                            label = { Text("You") },
-                            colors = colors
-                        )
-                    }
+                    PmBottomBar(
+                        tab = vm.tab,
+                        signedIn = vm.signedIn,
+                        avatar = vm.account?.avatar,
+                        activeDownloads = activeDownloads,
+                        onHome = { vm.select(Tab.Home) },
+                        onShorts = {
+                            val shorts = (vm.feed as? Load.Ready)?.data?.filter { it.isShort }.orEmpty()
+                            if (shorts.isEmpty()) {
+                                Toast.makeText(context, "Shorts are loading, try again in a moment", Toast.LENGTH_SHORT).show()
+                            } else {
+                                vm.openShorts(shorts, 0)
+                            }
+                        },
+                        onDownloads = { vm.select(Tab.Downloads) },
+                        onYou = { vm.select(Tab.You) }
+                    )
                 }
             }
         ) { padding ->
