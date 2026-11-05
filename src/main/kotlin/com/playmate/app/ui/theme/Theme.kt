@@ -28,7 +28,7 @@ import com.playmate.app.data.ThemePrefs
 val Accent = Color(0xFFFF4A2B)
 
 /** The near-black the dark theme sits on. Glass surfaces are lit from this. */
-val Ink = Color(0xFF08090C)
+val Ink = Color(0xFF0F0F0F)
 
 /** True while the dark theme is on screen. Glass and other custom surfaces read this. */
 val LocalPmDark = staticCompositionLocalOf { true }
@@ -37,15 +37,15 @@ private val DarkColors = darkColorScheme(
     primary = Accent,
     onPrimary = Color.White,
     background = Ink,
-    onBackground = Color(0xFFF5F5F7),
+    onBackground = Color(0xFFF1F1F1),
     surface = Ink,
-    onSurface = Color(0xFFF5F5F7),
-    surfaceVariant = Color(0xFF1C1D22),
-    onSurfaceVariant = Color(0xFFA1A1AA),
-    surfaceContainer = Color(0xFF111216),
-    surfaceContainerHigh = Color(0xFF1C1D22),
-    outline = Color(0xFF2E3037),
-    outlineVariant = Color(0xFF24262C)
+    onSurface = Color(0xFFF1F1F1),
+    surfaceVariant = Color(0xFF272727),
+    onSurfaceVariant = Color(0xFFAAAAAA),
+    surfaceContainer = Color(0xFF1F1F1F),
+    surfaceContainerHigh = Color(0xFF272727),
+    outline = Color(0xFF3F3F3F),
+    outlineVariant = Color(0xFF303030)
 )
 
 private val LightColors = lightColorScheme(
