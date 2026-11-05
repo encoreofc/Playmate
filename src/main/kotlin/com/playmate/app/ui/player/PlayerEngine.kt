@@ -15,8 +15,10 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.PmDownloader
+import com.playmate.app.data.SubtitleTrack
 
 /** One player for the whole app, shared by the UI and the background PlaybackService. */
 object PlayerHolder {
@@ -105,7 +107,12 @@ fun defaultQualityIndex(info: PlayableInfo, maxHeight: Int = 720): Int {
     return if (comfortable >= 0) comfortable else info.qualities.lastIndex
 }
 
-fun buildSource(info: PlayableInfo, qualityIndex: Int, cache: androidx.media3.datasource.DataSource.Factory? = null): MediaSource? {
+fun buildSource(
+    info: PlayableInfo,
+    qualityIndex: Int,
+    cache: androidx.media3.datasource.DataSource.Factory? = null,
+    subtitle: SubtitleTrack? = null
+): MediaSource? {
     // A download kept inside the app: play the file from the phone.
     info.localUri?.let { local ->
         return ProgressiveMediaSource.Factory(FileDataSource.Factory())
@@ -126,5 +133,20 @@ fun buildSource(info: PlayableInfo, qualityIndex: Int, cache: androidx.media3.da
     // The first source carries the title/channel/artwork shown in the notification.
     val video = progressive.createMediaSource(mediaItemFor(info, quality.video.content))
     val audio = quality.audio
-    return if (audio != null) MergingMediaSource(video, plain(audio.content)) else video
+    val picture: MediaSource = if (audio != null) MergingMediaSource(video, plain(audio.content)) else video
+
+    // Captions are a third, side-loaded source. A caption file that can't be fetched must never stop the
+    // video, so its load errors are treated as "no more captions".
+    if (subtitle == null) return picture
+    val captions = SingleSampleMediaSource.Factory(http)
+        .setTreatLoadErrorsAsEndOfStream(true)
+        .createMediaSource(
+            MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
+                .setMimeType(subtitle.mime)
+                .setLanguage(subtitle.language.ifBlank { null })
+                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                .build(),
+            C.TIME_UNSET
+        )
+    return MergingMediaSource(picture, captions)
 }
