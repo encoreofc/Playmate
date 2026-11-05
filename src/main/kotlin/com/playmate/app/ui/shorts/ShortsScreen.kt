@@ -2,6 +2,7 @@ package com.playmate.app.ui.shorts
 
 import android.content.Intent
 import android.view.TextureView
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -49,17 +50,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.FavoriteBorder as HeartOutlined
 import androidx.compose.material.icons.outlined.ModeComment as ModeCommentOutlined
 import androidx.compose.material.icons.outlined.Share as ShareOutlined
-import androidx.compose.material.icons.outlined.ThumbDown as ThumbDownOutlined
-import androidx.compose.material.icons.outlined.ThumbUp as ThumbUpOutlined
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.ThumbDown
-import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -120,11 +120,21 @@ import com.playmate.app.ui.player.CommentsSheet
 import com.playmate.app.ui.player.DownloadSheet
 import com.playmate.app.ui.player.PhoneSaveSheet
 import com.playmate.app.ui.player.PlayerHolder
+import com.playmate.app.ui.player.SaveSheet
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /** Two taps this close together (in time) are a double tap. */
 private const val DOUBLE_TAP_MS = 250L
+
+/** A hold on the outer part of the screen (this share of the width, on each side) is the 2x hold. */
+private const val EDGE_SHARE = 0.3f
+
+/** Swiping down this far (in dp) while holding locks 2x on. */
+private const val LOCK_SWIPE_DP = 48f
+
+private val HeartRed = Color(0xFFFF2D55)
 
 /**
  * The Shorts screen: one Short per page, a swipe moves exactly one page, never ends.
@@ -156,6 +166,7 @@ fun ShortsScreen(launch: ShortsLaunch, vm: AppViewModel) {
     var showMore by remember { mutableStateOf(false) }
     var downloadFor by remember { mutableStateOf<PlayableInfo?>(null) }
     var phoneSaveFor by remember { mutableStateOf<PlayableInfo?>(null) }
+    var showSave by remember { mutableStateOf(false) }
 
     BackHandler { vm.closeShorts() }
 
@@ -241,8 +252,8 @@ fun ShortsScreen(launch: ShortsLaunch, vm: AppViewModel) {
             )
         }
 
-        // Top bar
-        Row(
+        // Top bar (hidden in clear screen mode)
+        if (!controller.clearScreen) Row(
             Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
@@ -297,11 +308,73 @@ fun ShortsScreen(launch: ShortsLaunch, vm: AppViewModel) {
                 showMore = false
                 phoneSaveFor = info
             },
-            onDismiss = { showMore = false }
+            onDismiss = { showMore = false },
+            captionLang = controller.captionLang,
+            onCaption = controller::setCaptionLang,
+            onClearScreen = {
+                showMore = false
+                controller.setClearScreen(true)
+            },
+            onSaveToPlaylist = {
+                showMore = false
+                vm.loadPlaylists()
+                showSave = true
+            },
+            onNotInterested = {
+                showMore = false
+                skipWithFeedback(controller, pager, scope, context, channelWide = false)
+            },
+            onDontRecommend = {
+                showMore = false
+                skipWithFeedback(controller, pager, scope, context, channelWide = true)
+            },
+            limitMin = controller.limitMin,
+            usedMinutes = controller.usedMinutes(),
+            onLimit = controller::setLimit
         )
     }
+    if (showSave) SaveSheet(vm = vm, onDismiss = { showSave = false })
     downloadFor?.let { DownloadSheet(info = it, onDismiss = { downloadFor = null }) }
     phoneSaveFor?.let { PhoneSaveSheet(info = it, onDismiss = { phoneSaveFor = null }) }
+
+    // The Shorts timer: the daily limit is reached. One tap lets the viewer carry on, or leave.
+    if (controller.breakDue) {
+        AlertDialog(
+            onDismissRequest = controller::dismissBreak,
+            title = { Text("Time for a break") },
+            text = { Text("You've watched ${controller.limitMin} minutes of Shorts today, the daily limit you set.") },
+            confirmButton = { TextButton(onClick = controller::dismissBreak) { Text("Keep watching") } },
+            dismissButton = {
+                TextButton(onClick = {
+                    controller.dismissBreak()
+                    vm.closeShorts()
+                }) { Text("Close Shorts") }
+            }
+        )
+    }
+}
+
+/**
+ * "Not interested" / "Don't recommend this channel": tells YouTube when it gave this Short a feedback option,
+ * then moves on to the next Short either way.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private fun skipWithFeedback(
+    controller: ShortsController,
+    pager: androidx.compose.foundation.pager.PagerState,
+    scope: kotlinx.coroutines.CoroutineScope,
+    context: android.content.Context,
+    channelWide: Boolean
+) {
+    val sent = controller.sendFeedback(channelWide)
+    val message = when {
+        sent && channelWide -> "Okay, we'll recommend this channel less"
+        sent -> "Okay, we'll show fewer Shorts like this"
+        else -> "Skipped. YouTube gave no feedback option for this Short"
+    }
+    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    val next = (pager.currentPage + 1).coerceAtMost(controller.items.lastIndex)
+    if (next != pager.currentPage) scope.launch { pager.animateScrollToPage(next) }
 }
 
 @Composable
@@ -356,15 +429,15 @@ private fun ShortPage(
             textureView = textureView
         )
 
-        // Fades so white text stays readable on any picture.
-        Box(
+        // Fades so white text stays readable on any picture (gone in clear screen mode).
+        if (!controller.clearScreen) Box(
             Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .height(120.dp)
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.5f), Color.Transparent)))
         )
-        Box(
+        if (!controller.clearScreen) Box(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -373,6 +446,8 @@ private fun ShortPage(
         )
 
         // Tap: pause / play, at once. Double tap: like (the first tap's pause is taken back).
+        // Hold on a screen edge: 2x while held; swipe down while holding to keep 2x on.
+        // In clear screen mode a tap brings the icons back instead.
         Box(
             Modifier
                 .fillMaxSize()
@@ -381,9 +456,43 @@ private fun ShortPage(
                     var lastTapAtPosition = Offset.Zero
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        val up = waitForUpOrCancellation() ?: return@awaitEachGesture
-                        if (!isCurrent) return@awaitEachGesture
-                        if (up.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis) {
+                        var timedOut = true
+                        val up = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                            val released = waitForUpOrCancellation()
+                            timedOut = false
+                            released
+                        }
+                        if (timedOut) {
+                            // Still down after the long-press time: on an edge of the screen that is the 2x hold.
+                            val edge = down.position.x < size.width * EDGE_SHARE ||
+                                down.position.x > size.width * (1f - EDGE_SHARE)
+                            if (!isCurrent || latestError != null || controller.paused || controller.clearScreen || !edge) {
+                                return@awaitEachGesture
+                            }
+                            controller.boostStart()
+                            var locked = false
+                            try {
+                                var swiped = 0f
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    // The hold owns the finger now: the pager must not take the swipe.
+                                    change.consume()
+                                    if (!change.pressed) break
+                                    swiped += change.position.y - change.previousPosition.y
+                                    if (!locked && swiped > LOCK_SWIPE_DP * density) {
+                                        locked = true
+                                        controller.boostLock()
+                                    }
+                                }
+                            } finally {
+                                if (!locked) controller.boostEnd()
+                            }
+                            return@awaitEachGesture
+                        }
+                        if (up == null || !isCurrent) return@awaitEachGesture
+                        if (controller.clearScreen) {
+                            controller.setClearScreen(false)
                             return@awaitEachGesture
                         }
                         val close = (up.position - lastTapAtPosition).getDistance() < viewConfiguration.touchSlop * 6
@@ -411,7 +520,7 @@ private fun ShortPage(
         }
 
         AnimatedVisibility(
-            visible = isCurrent && controller.paused,
+            visible = isCurrent && controller.paused && !controller.clearScreen,
             modifier = Modifier.align(Alignment.Center),
             enter = fadeIn(tween(100)) + scaleIn(initialScale = 0.7f),
             exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.9f)
@@ -424,6 +533,71 @@ private fun ShortPage(
             }
         }
 
+        // Paused: tap the speaker under the play button to mute or unmute.
+        AnimatedVisibility(
+            visible = isCurrent && controller.paused && !controller.clearScreen,
+            modifier = Modifier.align(Alignment.Center).offset(y = 72.dp),
+            enter = fadeIn(tween(100)),
+            exit = fadeOut(tween(150))
+        ) {
+            Box(
+                Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .clickable { controller.toggleMute() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    if (controller.muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp,
+                    contentDescription = if (controller.muted) "Unmute" else "Mute",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+
+        // 2x indicator: shown while the edge is held, and stays (tap to unlock) once locked.
+        AnimatedVisibility(
+            visible = isCurrent && (controller.boosting || controller.boostLocked),
+            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 60.dp),
+            enter = fadeIn(tween(100)),
+            exit = fadeOut(tween(150))
+        ) {
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .clickable(enabled = controller.boostLocked) { controller.boostUnlock() }
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    if (controller.boostLocked) "2x locked · tap to unlock" else "2x",
+                    color = Color.White,
+                    style = ShortText.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                )
+            }
+        }
+
+        // Captions, when the viewer turned them on for this language.
+        val captionText = slot.caption
+        if (!controller.clearScreen && isCurrent && mine && controller.captionLang != null && captionText.isNotBlank()) {
+            Text(
+                captionText,
+                color = Color.White,
+                textAlign = TextAlign.Center,
+                style = ShortText.copy(fontSize = 16.sp, fontWeight = FontWeight.Medium, shadow = null),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(start = 20.dp, end = 20.dp, bottom = 190.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+            )
+        }
+
         // The like burst appears where the finger tapped.
         AnimatedVisibility(
             visible = heartVisible,
@@ -433,7 +607,7 @@ private fun ShortPage(
             enter = fadeIn(tween(80)) + scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy), initialScale = 0.3f),
             exit = fadeOut(tween(300)) + scaleOut(targetScale = 1.3f)
         ) {
-            Icon(Icons.Rounded.ThumbUp, contentDescription = null, tint = Color.White, modifier = Modifier.size(104.dp))
+            Icon(Icons.Rounded.Favorite, contentDescription = null, tint = HeartRed, modifier = Modifier.size(104.dp))
         }
 
         if (error != null) {
@@ -455,8 +629,8 @@ private fun ShortPage(
         val avatar = meta?.channelAvatar ?: info?.channelAvatar
         val channelId = meta?.channelId ?: info?.channelId
 
-        // Right rail
-        Column(
+        // Right rail (gone in clear screen mode). A heart replaces like and dislike, as on YouTube.
+        if (!controller.clearScreen) Column(
             Modifier
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()
@@ -465,15 +639,11 @@ private fun ShortPage(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             val liked = meta?.reaction == Reaction.Liked
-            val disliked = meta?.reaction == Reaction.Disliked
             RailAction(
-                icon = if (liked) Icons.Rounded.ThumbUp else Icons.Outlined.ThumbUpOutlined,
-                label = meta?.likeCount ?: "Like"
+                icon = if (liked) Icons.Rounded.Favorite else Icons.Outlined.HeartOutlined,
+                label = meta?.likeCount ?: "Like",
+                tint = if (liked) HeartRed else Color.White
             ) { if (isCurrent) vm.react(Reaction.Liked) }
-            RailAction(
-                icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Outlined.ThumbDownOutlined,
-                label = "Dislike"
-            ) { if (isCurrent) vm.react(Reaction.Disliked) }
             RailAction(icon = Icons.Outlined.ModeCommentOutlined, label = meta?.commentCount ?: "Comments") {
                 if (isCurrent) onComments()
             }
@@ -507,8 +677,8 @@ private fun ShortPage(
             }
         }
 
-        // Channel, subscribe, title
-        Column(
+        // Channel, subscribe, title (gone in clear screen mode)
+        if (!controller.clearScreen) Column(
             Modifier
                 .align(Alignment.BottomStart)
                 .navigationBarsPadding()
@@ -715,7 +885,7 @@ private fun SkeletonBar(width: Dp, height: Dp) {
 }
 
 @Composable
-private fun RailAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun RailAction(icon: ImageVector, label: String, tint: Color = Color.White, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val scale by animateFloatAsState(
@@ -733,7 +903,7 @@ private fun RailAction(icon: ImageVector, label: String, onClick: () -> Unit) {
             .padding(horizontal = 6.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(30.dp))
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(30.dp))
         Spacer(Modifier.height(4.dp))
         Text(label, color = Color.White, style = RailText, maxLines = 1)
     }
