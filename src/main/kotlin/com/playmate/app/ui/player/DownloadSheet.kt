@@ -19,6 +19,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,48 +49,88 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.playmate.app.data.AudioFormat
+import com.playmate.app.data.Ffmpeg
 import com.playmate.app.data.OfflineStore
 import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.SaveCenter
 import com.playmate.app.data.SaveState
 import com.playmate.app.data.SaveTarget
 import com.playmate.app.data.activeDownload
+import com.playmate.app.data.estimatedBytes
+import com.playmate.app.data.findTarget
 import com.playmate.app.data.formatSize
 import com.playmate.app.data.probeSize
 import com.playmate.app.data.safeFileName
 import com.playmate.app.data.saveTargetsFor
+import com.playmate.app.data.sizeIsApproximate
 import com.playmate.app.ui.theme.Accent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
-/** "Download": pick a quality, and the video is kept inside the app (Downloads tab), playable offline. */
+/** Options that are rarely what a person wants to keep inside the app: extra codecs, and the very big audio files. */
+private fun isHeavy(target: SaveTarget): Boolean =
+    !target.primary || target.audioFormat == AudioFormat.FLAC || target.audioFormat == AudioFormat.WAV
+
+/** The heading an audio option sits under. */
+private fun dlAudioGroup(target: SaveTarget): String = when (target.audioFormat) {
+    AudioFormat.MP3 -> "Audio  ·  MP3"
+    AudioFormat.M4A, AudioFormat.OPUS -> "Audio  ·  original sound"
+    else -> "Audio  ·  lossless"
+}
+
+/** "Download": pick a format and quality, and the file is kept inside the app (Downloads tab), playable offline. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val targets = remember(info) { saveTargetsFor(info) }
+
+    // FFmpeg is checked in the background when the app starts; its formats appear once it is ready.
+    val ffmpegReady = Ffmpeg.available
+    val targets = remember(info, ffmpegReady) { saveTargetsFor(info) }
     val sizes = remember(info) { mutableStateMapOf<String, Long>() }
     var picked by remember { mutableStateOf<SaveTarget?>(null) }
+    var more by remember { mutableStateOf(false) }
 
-    LaunchedEffect(info.url) {
-        val urls = (targets.video + targets.audio).flatMap { it.urls }.distinct()
-        urls.forEach { url -> launch { sizes[url] = probeSize(url) } }
+    // Sizes are measured a few at a time, the ones on screen first.
+    LaunchedEffect(info.url, ffmpegReady) {
+        val gate = Semaphore(6)
+        val everything = targets.video + targets.audio
+        val urls = (everything.filter { !isHeavy(it) } + everything.filter { isHeavy(it) })
+            .flatMap { it.urls }
+            .distinct()
+            .filter { it !in sizes }
+        urls.forEach { url -> launch { gate.withPermit { sizes[url] = probeSize(url) } } }
     }
 
-    val fallback = targets.video.firstOrNull { it.height in 1..720 }
-        ?: targets.video.lastOrNull()
-        ?: targets.audio.firstOrNull()
-    val shown = picked ?: fallback
+    val everything = targets.video + targets.audio
+    val videoList = if (more) targets.video else targets.video.filter { !isHeavy(it) }
+    val audioList = if (more) targets.audio else targets.audio.filter { !heavyAudio(it) }
+    val extra = everything.count { isHeavy(it) }
 
+    // Inside the app the first choice is the best video up to 720p, which keeps files modest; one tap picks more.
+    val fallback = remember(targets) {
+        findTarget(targets, "v|720|0|*")?.takeIf { !it.isAudio } ?: targets.audio.firstOrNull()
+    }
+    val shown = picked?.takeIf { it in everything } ?: fallback
+
+    val durationSec = (PlayerHolder.peek()?.duration?.takeIf { it > 0 } ?: 0L) / 1000
+
+    /** "…" while measuring, "—" when unknown, "~" in front of a calculated size. */
     fun sizeOf(target: SaveTarget): String {
-        val parts = target.urls.map { sizes[it] }
-        if (parts.any { it == null }) return "…"
-        val sum = parts.sumOf { (it ?: 0L).coerceAtLeast(0L) }
-        return if (sum > 0) formatSize(sum) else "—"
+        val bytes = target.estimatedBytes(sizes, durationSec) ?: return "…"
+        if (bytes <= 0) return "—"
+        return (if (target.sizeIsApproximate()) "~" else "") + formatSize(bytes)
     }
 
     val free = remember { runCatching { StatFs(context.filesDir.path).availableBytes }.getOrDefault(0L) }
     val nothing = targets.video.isEmpty() && targets.audio.isEmpty()
+
+    // A download needs room for the pieces and the finished file at the same time.
+    val needed = shown?.estimatedBytes(sizes, durationSec)?.takeIf { it > 0 }
+    val tight = needed != null && free > 0 && needed * 2 + 64L * 1024 * 1024 > free
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -116,24 +158,61 @@ fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                     info.live -> DlNote("Live streams can't be downloaded.")
                     nothing -> DlNote("No downloadable files were found for this video.")
                     else -> {
-                        if (targets.video.isNotEmpty()) {
+                        if (videoList.isNotEmpty()) {
                             DlSection("Video")
-                            targets.video.forEach { target ->
+                            videoList.forEach { target ->
                                 DlOption(target, sizeOf(target), target === shown) { picked = target }
                             }
                         }
-                        if (targets.audio.isNotEmpty()) {
-                            DlSection("Audio only")
-                            targets.audio.forEach { target ->
+                        audioList.groupBy { dlAudioGroup(it) }.forEach { (title, items) ->
+                            DlSection(title)
+                            items.forEach { target ->
                                 DlOption(target, sizeOf(target), target === shown) { picked = target }
                             }
+                        }
+                        if (extra > 0) {
+                            Row(
+                                Modifier
+                                    .padding(top = 12.dp)
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        more = !more
+                                        // Folding the extras away must not leave one of them quietly selected.
+                                        if (!more) picked = picked?.takeIf { !isHeavy(it) }
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    if (more) "Fewer formats" else "More formats  ·  $extra",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    if (more) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                        if (!ffmpegReady) {
+                            DlNote("MP3, FLAC and WAV aren't available on this phone right now.")
                         }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
             }
 
-            if (free > 0) {
+            if (tight) {
+                Text(
+                    "This may not fit: it needs about ${formatSize((needed ?: 0L) * 2)} of free space while it downloads.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                )
+            } else if (free > 0) {
                 Text(
                     "Kept inside Playmate  ·  ${formatSize(free)} free on your phone",
                     style = MaterialTheme.typography.bodySmall,
@@ -170,6 +249,10 @@ fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
     }
 }
 
+/** Audio rows that stay folded away by default: only the very big files. (Video extras are the other codecs.) */
+private fun heavyAudio(target: SaveTarget): Boolean =
+    target.audioFormat == AudioFormat.FLAC || target.audioFormat == AudioFormat.WAV
+
 /**
  * Shown when the video already has a download (or one is running): progress, what is saved,
  * delete, and a way to get another quality.
@@ -194,6 +277,14 @@ fun DownloadStateSheet(
         }
     }
     val percent = remember(tick, active) { active?.percent ?: 0 }
+    val stateText = remember(tick, active) {
+        when (active?.state) {
+            SaveState.Queued -> "Waiting to start"
+            SaveState.Joining -> "Getting the file ready…"
+            SaveState.Saving -> "Saving…"
+            else -> "Downloading  ${active?.percent ?: 0}%"
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -214,7 +305,7 @@ fun DownloadStateSheet(
 
             if (active != null) {
                 Text(
-                    if (active.state == SaveState.Queued) "Waiting to start" else "Downloading  $percent%",
+                    stateText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 14.dp)
@@ -307,7 +398,7 @@ private fun DlOption(target: SaveTarget, size: String, selected: Boolean, onClic
         Column(Modifier.weight(1f).padding(start = 6.dp)) {
             Text(target.label, style = MaterialTheme.typography.titleSmall)
             Text(
-                "${target.format}  ·  $size",
+                "${target.detail.ifBlank { target.format }}  ·  $size",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
