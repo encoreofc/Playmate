@@ -3,6 +3,7 @@ package com.playmate.app
 import android.app.Application
 import com.playmate.app.data.OfflineStore
 import com.playmate.app.data.PmDownloader
+import com.playmate.app.ui.player.ShortsCache
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.localization.ContentCountry
 import org.schabi.newpipe.extractor.localization.Localization
@@ -12,5 +13,7 @@ class PlaymateApp : Application() {
         super.onCreate()
         NewPipe.init(PmDownloader, Localization("en", "BD"), ContentCountry("BD"))
         OfflineStore.init(this)
+        // Opening the Shorts disk cache reads the disk; do it now, away from the screen.
+        Thread { runCatching { ShortsCache.get(this) } }.start()
     }
 }
