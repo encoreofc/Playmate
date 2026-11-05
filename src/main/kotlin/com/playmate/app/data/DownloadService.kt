@@ -18,6 +18,7 @@ import androidx.core.content.ContextCompat
 import com.playmate.app.data.SaveCenter
 import com.playmate.app.data.SaveJob
 import com.playmate.app.data.SaveState
+import com.playmate.app.data.formatSpeed
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,7 +29,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Keeps downloads running when the app is in the background or the screen is off,
- * and shows their progress in a notification with a Cancel button.
+ * and shows their progress in a notification with Pause / Resume and Cancel buttons.
  */
 class DownloadService : Service() {
 
@@ -38,7 +39,11 @@ class DownloadService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_CANCEL) SaveCenter.cancelAll()
+        when (intent?.action) {
+            ACTION_CANCEL -> SaveCenter.cancelAll()
+            ACTION_PAUSE -> SaveCenter.pauseAll()
+            ACTION_RESUME -> SaveCenter.resumeAll(this)
+        }
 
         ServiceCompat.startForeground(
             this,
@@ -74,6 +79,8 @@ class DownloadService : Service() {
 
     companion object {
         const val ACTION_CANCEL = "com.playmate.app.CANCEL_DOWNLOADS"
+        const val ACTION_PAUSE = "com.playmate.app.PAUSE_DOWNLOADS"
+        const val ACTION_RESUME = "com.playmate.app.RESUME_DOWNLOADS"
         const val ONGOING_ID = 4101
 
         fun start(context: Context) {
@@ -108,6 +115,14 @@ object DownloadNotifications {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+    private fun serviceAction(ctx: Context, requestCode: Int, action: String): PendingIntent =
+        PendingIntent.getService(
+            ctx,
+            requestCode,
+            Intent(ctx, DownloadService::class.java).setAction(action),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
     fun progress(ctx: Context): Notification {
         ensureChannels(ctx)
         val jobs = SaveCenter.liveJobs()
@@ -116,6 +131,9 @@ object DownloadNotifications {
         val done = jobs.sumOf { it.bytes.get() }
         val percent = if (total > 0) ((done * 100) / total).toInt().coerceIn(0, 100) else 0
         val downloading = jobs.any { it.state == SaveState.Downloading } && total > 0
+        val allPaused = jobs.isNotEmpty() && jobs.all { it.state == SaveState.Paused }
+        val speed = jobs.filter { it.state == SaveState.Downloading }.sumOf { it.speed }
+        val speedText = if (speed > 0) "  ·  ${formatSpeed(speed)}" else ""
 
         val offline = jobs.isNotEmpty() && jobs.all { it.offline }
 
@@ -127,38 +145,39 @@ object DownloadNotifications {
         val text = when {
             jobs.isEmpty() -> "Finishing up"
             single != null -> when (single.state) {
-                SaveState.Queued -> "Waiting to start"
-                SaveState.Downloading -> "Downloading  $percent%"
-                SaveState.Joining -> "Joining video and audio"
+                SaveState.Queued -> single.message ?: "Waiting to start"
+                SaveState.Downloading -> "Downloading  $percent%$speedText"
+                SaveState.Joining -> "Getting the file ready"
                 SaveState.Saving -> if (offline) "Finishing up" else "Saving to your phone"
+                SaveState.Paused -> if (single.autoPaused) "Waiting for Wi-Fi" else "Paused  $percent%"
                 else -> "Finishing up"
             }
-            else -> "$percent% overall"
+            allPaused -> "Paused  ·  $percent% overall"
+            else -> "$percent% overall$speedText"
         }
 
-        val cancel = PendingIntent.getService(
-            ctx,
-            1,
-            Intent(ctx, DownloadService::class.java).setAction(DownloadService.ACTION_CANCEL),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        return NotificationCompat.Builder(ctx, CH_PROGRESS)
+        val builder = NotificationCompat.Builder(ctx, CH_PROGRESS)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
             .setContentText(text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
-            .setProgress(100, percent, !downloading)
+            .setProgress(100, percent, !downloading && !allPaused)
             .setContentIntent(openApp(ctx))
-            .addAction(0, "Cancel", cancel)
-            .build()
+
+        if (allPaused) {
+            builder.addAction(0, "Resume", serviceAction(ctx, 3, DownloadService.ACTION_RESUME))
+        } else {
+            builder.addAction(0, "Pause", serviceAction(ctx, 2, DownloadService.ACTION_PAUSE))
+        }
+        builder.addAction(0, "Cancel", serviceAction(ctx, 1, DownloadService.ACTION_CANCEL))
+        return builder.build()
     }
 
     @SuppressLint("MissingPermission")
     fun finished(ctx: Context, job: SaveJob) {
-        if (job.state == SaveState.Cancelled) return
+        if (job.state == SaveState.Cancelled || job.state == SaveState.Paused) return
         ensureChannels(ctx)
         val ok = job.state == SaveState.Done
         val text = if (ok) {
