@@ -13,7 +13,9 @@ data class VideoItem(
     val uploaded: String?,
     val live: Boolean = false,
     /** Round channel picture shown next to the title, when the feed carries one. */
-    val avatar: String? = null
+    val avatar: String? = null,
+    /** The day heading YouTube put this video under in a list like History ("Today", "Yesterday"), when it has one. */
+    val section: String? = null
 ) {
     /** Short-form video (vertical): shown in the Shorts shelf, not as a normal card. */
     val isShort: Boolean get() = url.contains("/shorts/")
