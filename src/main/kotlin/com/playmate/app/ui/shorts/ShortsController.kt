@@ -81,8 +81,10 @@ class ShortsController(
         private set
     var muted by mutableStateOf(false)
         private set
-    var speed by mutableFloatStateOf(1f)
-        private set
+    private var speedState by mutableFloatStateOf(1f)
+
+    /** Playback speed. Read-only here; change it with [setSpeed]. */
+    val speed: Float get() = speedState
 
     /** Where the Short on screen is, 0..1. Read it where things are drawn, not where they are composed. */
     var progress by mutableFloatStateOf(0f)
@@ -151,7 +153,7 @@ class ShortsController(
     }
 
     fun setSpeed(value: Float) {
-        speed = value
+        speedState = value
         slots.forEach { it.player.setPlaybackSpeed(value) }
     }
 
