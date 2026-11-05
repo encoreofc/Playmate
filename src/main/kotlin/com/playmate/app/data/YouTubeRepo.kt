@@ -126,23 +126,24 @@ object YouTubeRepo {
 
         val options = mutableListOf<Pair<Int, Quality>>()
 
-        info.videoStreams
+        val withSound = info.videoStreams
             .filter { it.deliveryMethod == progressive && it.isUrl && !it.isVideoOnly }
-            .forEach { v ->
-                val h = heightOf(v.resolution)
-                if (h > 0) options += 0 to Quality(v.resolution, h, v, null)
-            }
-
-        info.videoOnlyStreams
+        val videoOnly = info.videoOnlyStreams
             .filter { it.deliveryMethod == progressive && it.isUrl }
-            .forEach { v ->
-                val h = heightOf(v.resolution)
-                val a = if (v.format == MediaFormat.WEBM) bestWebm ?: bestAny else bestM4a ?: bestAny
-                if (h > 0 && a != null) {
-                    val rank = if (v.format == MediaFormat.MPEG_4) 1 else 2
-                    options += rank to Quality(v.resolution, h, v, a)
-                }
+
+        withSound.forEach { v ->
+            val h = heightOf(v.resolution)
+            if (h > 0) options += 0 to Quality(v.resolution, h, v, null)
+        }
+
+        videoOnly.forEach { v ->
+            val h = heightOf(v.resolution)
+            val a = if (v.format == MediaFormat.WEBM) bestWebm ?: bestAny else bestM4a ?: bestAny
+            if (h > 0 && a != null) {
+                val rank = if (v.format == MediaFormat.MPEG_4) 1 else 2
+                options += rank to Quality(v.resolution, h, v, a)
             }
+        }
 
         val qualities = options
             .groupBy { it.second.height }
@@ -200,7 +201,9 @@ object YouTubeRepo {
             channelId = Regex("/channel/(UC[A-Za-z0-9_-]{22})").find(info.uploaderUrl.orEmpty())
                 ?.groupValues?.get(1),
             channelAvatar = info.uploaderAvatars.pick(),
-            subtitles = subtitles
+            subtitles = subtitles,
+            videoStreams = withSound,
+            videoOnlyStreams = videoOnly
         )
     }
 
