@@ -129,8 +129,12 @@ object FeedParser {
         var token: String? = null
         val chips = ArrayList<FeedChip>()
 
+        var section: String? = null
+
         fun add(item: VideoItem?) {
-            if (item != null && item.url !in found) found[item.url] = item
+            if (item != null && item.url !in found) {
+                found[item.url] = if (section != null) item.copy(section = section) else item
+            }
         }
 
         fun visit(node: Any?) {
@@ -147,6 +151,13 @@ object FeedParser {
                             key == "lockupViewModel" && value is JSONObject -> add(lockup(value))
                             key == "shortsLockupViewModel" && value is JSONObject -> add(shortsLockup(value))
                             key == "reelItemRenderer" && value is JSONObject -> add(reelItem(value))
+                            key == "itemSectionRenderer" && value is JSONObject -> {
+                                // A day group (History: "Yesterday", "Tuesday"): its videos carry that heading.
+                                val before = section
+                                sectionLabel(value)?.let { section = it }
+                                visit(value)
+                                section = before
+                            }
                             key == "chipCloudChipRenderer" && value is JSONObject -> chip(value)?.let { chips += it }
                             key == "continuationItemRenderer" && value is JSONObject -> {
                                 if (token == null) {
@@ -167,6 +178,12 @@ object FeedParser {
             items, token, if (items.isEmpty()) describe(root) else null,
             chips = chips.distinctBy { it.label }
         )
+    }
+
+    /** The heading of an item section, e.g. "Yesterday" in History, or null when it has none. */
+    private fun sectionLabel(section: JSONObject): String? {
+        val header = section.optJSONObject("header")?.optJSONObject("itemSectionHeaderRenderer") ?: return null
+        return text(header.optJSONObject("title")).trim().ifBlank { null }
     }
 
     /** One real topic chip. Chips that lead nowhere (no continuation, not selected) are dropped. */
