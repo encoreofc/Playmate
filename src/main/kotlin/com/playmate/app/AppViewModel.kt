@@ -65,6 +65,9 @@ data class RepliesState(
     val error: String? = null
 )
 
+/** Opens the Shorts screen: the Shorts to start with and which one to show first. A new object per opening. */
+class ShortsLaunch(val items: List<VideoItem>, val start: Int)
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val recentStore = RecentSearches(app)
@@ -117,6 +120,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var playlists by mutableStateOf<Load<List<PlaylistOption>>?>(null); private set
 
     var channel by mutableStateOf<ChannelState?>(null); private set
+
+    /** Set while the full-screen Shorts player is open. */
+    var shorts by mutableStateOf<ShortsLaunch?>(null); private set
+    private var shortFocus: String? = null
 
     private var feedJob: Job? = null
     private var suggestJob: Job? = null
@@ -454,6 +461,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- player
 
     fun open(item: VideoItem) {
+        if (item.isShort) {
+            openShorts(listOf(item), 0)
+            return
+        }
         finishWatch()
         playerExpanded = true
         playing = Playing(item, Load.Loading)
@@ -518,6 +529,50 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val position = PlayerHolder.get(getApplication()).currentPosition / 1000.0
         viewModelScope.launch {
             attempt { session.progress(position, playing = false, final = true) }
+        }
+    }
+
+    // ---------------------------------------------------------------- Shorts
+
+    /** Opens the full-screen Shorts player at [index] of [items]; it keeps going with more Shorts after them. */
+    fun openShorts(items: List<VideoItem>, index: Int = 0) {
+        if (items.isEmpty()) return
+        // A normal video that is playing steps aside (the Shorts screen pauses it).
+        if (playing != null) playerExpanded = false
+        shortFocus = null
+        resetWatchExtras()
+        shorts = ShortsLaunch(items, index.coerceIn(0, items.lastIndex))
+    }
+
+    /** The Short that is now on screen: loads its reactions, channel and comment entry. */
+    fun focusShort(item: VideoItem) {
+        val id = videoIdOf(item.url) ?: return
+        if (shortFocus == id) return
+        shortFocus = id
+        resetWatchExtras()
+        meta = WatchMeta.blank(id)
+        metaJob = viewModelScope.launch {
+            attempt { Engage.watchMeta(id) }.onSuccess { m ->
+                if (shortFocus != id) return@onSuccess
+                meta = m
+                commentsTotal = commentsTotal ?: m.commentCount
+                val channelId = m.channelId
+                val subscribed = m.subscribed
+                if (channelId != null && subscribed != null) subscriptions[channelId] = subscribed
+            }
+        }
+    }
+
+    fun closeShorts() {
+        shorts = null
+        shortFocus = null
+        resetWatchExtras()
+        // Back to the normal video that was playing before: its page data comes back too.
+        playing?.seed?.let { seed ->
+            videoIdOf(seed.url)?.let { id ->
+                meta = WatchMeta.blank(id)
+                loadMeta(id, seed.url)
+            }
         }
     }
 
