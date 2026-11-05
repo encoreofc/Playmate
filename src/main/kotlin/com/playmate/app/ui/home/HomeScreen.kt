@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -118,31 +119,57 @@ fun HomeScreen(vm: AppViewModel) {
                 )
             }
 
-            if (vm.feedChips.isNotEmpty()) {
-                item {
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        itemsIndexed(vm.feedChips) { index, chip ->
-                            val selected = index == vm.selectedChip
-                            Box(
-                                Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        if (selected) MaterialTheme.colorScheme.onBackground
-                                        else MaterialTheme.colorScheme.surfaceVariant
-                                    )
-                                    .clickable { vm.selectChip(index) }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    chip.label,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (selected) MaterialTheme.colorScheme.background
-                                    else MaterialTheme.colorScheme.onBackground
+            // The chip row, as on YouTube: a compass chip, a 16dp gap, then the topic chips (32dp tall, 8dp corners).
+            item {
+                LazyRow(
+                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    item(key = "explore") {
+                        Box(
+                            Modifier
+                                .padding(end = 8.dp)
+                                .height(32.dp)
+                                .width(42.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable {
+                                    Toast.makeText(context, "Explore is coming soon", Toast.LENGTH_SHORT).show()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Outlined.Explore,
+                                contentDescription = "Explore",
+                                tint = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                    itemsIndexed(vm.feedChips) { index, chip ->
+                        val selected = index == vm.selectedChip
+                        Box(
+                            Modifier
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.onBackground
+                                    else MaterialTheme.colorScheme.surfaceVariant
                                 )
-                            }
+                                .clickable { vm.selectChip(index) }
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                chip.label,
+                                fontSize = 14.sp,
+                                lineHeight = 18.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                color = if (selected) MaterialTheme.colorScheme.background
+                                else MaterialTheme.colorScheme.onBackground
+                            )
                         }
                     }
                 }
