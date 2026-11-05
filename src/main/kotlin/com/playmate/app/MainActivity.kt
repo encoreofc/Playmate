@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
+import com.playmate.app.data.ThemePrefs
 import com.playmate.app.ui.AppRoot
 import com.playmate.app.ui.theme.PlaymateTheme
 
@@ -24,6 +25,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        ThemePrefs.load(this)
         setContent {
             PlaymateTheme {
                 AppRoot(vm)
