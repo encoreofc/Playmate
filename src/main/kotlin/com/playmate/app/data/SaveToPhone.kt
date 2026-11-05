@@ -20,6 +20,7 @@ import com.playmate.app.DownloadNotifications
 import com.playmate.app.DownloadService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -31,97 +32,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import okhttp3.Request
-import org.schabi.newpipe.extractor.MediaFormat
-import org.schabi.newpipe.extractor.stream.AudioStream
+import okhttp3.Call
 import java.io.File
 import java.io.IOException
-import java.io.RandomAccessFile
 import java.nio.ByteBuffer
-import java.nio.channels.FileChannel
+import java.util.Collections
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import android.media.MediaFormat as TrackFormat
 
-// ------------------------------------------------------------------ what can be saved
-
-/** One thing a person can save: an audio file, or a video at one quality. */
-class SaveTarget(
-    val isAudio: Boolean,
-    val label: String,
-    val height: Int,
-    val format: String,
-    val ext: String,
-    val mime: String,
-    val videoUrl: String?,
-    val audioUrl: String?,
-    val webm: Boolean
-) {
-    val urls: List<String> get() = listOfNotNull(videoUrl, audioUrl)
-}
-
-class SaveTargets(val audio: List<SaveTarget>, val video: List<SaveTarget>)
-
-fun saveTargetsFor(info: PlayableInfo): SaveTargets {
-    val streams = info.audios.ifEmpty { listOfNotNull(info.audioOnly) }
-
-    fun audioTarget(s: AudioStream): SaveTarget {
-        val webm = s.format == MediaFormat.WEBMA
-        val kbps = s.averageBitrate
-        return SaveTarget(
-            isAudio = true,
-            label = if (kbps > 0) "${kbps}K" else "Audio",
-            height = 0,
-            format = if (webm) "WEBM" else "M4A",
-            ext = if (webm) "webm" else "m4a",
-            mime = if (webm) "audio/webm" else "audio/mp4",
-            videoUrl = null,
-            audioUrl = s.content,
-            webm = webm
-        )
-    }
-
-    val m4a = streams.filter { it.format == MediaFormat.M4A }.sortedByDescending { it.averageBitrate }
-    val opus = streams.filter { it.format == MediaFormat.WEBMA }.sortedByDescending { it.averageBitrate }
-    val picks = mutableListOf<AudioStream>()
-    m4a.firstOrNull()?.let { picks += it }
-    val lowest = m4a.lastOrNull()
-    val highest = m4a.firstOrNull()
-    if (lowest != null && highest != null && lowest.averageBitrate in 1 until (highest.averageBitrate * 6 / 10)) {
-        picks += lowest
-    }
-    opus.firstOrNull()?.let { picks += it }
-    val audio = picks.map(::audioTarget)
-
-    val video = info.qualities.map { q ->
-        val format = q.video.format
-        val webm = format == MediaFormat.WEBM
-        val ext = when {
-            q.audio == null -> format?.suffix ?: "mp4"
-            webm -> "webm"
-            else -> "mp4"
-        }
-        val mime = when (ext) {
-            "webm" -> "video/webm"
-            "3gp" -> "video/3gpp"
-            else -> "video/mp4"
-        }
-        SaveTarget(
-            isAudio = false,
-            label = if (q.height >= 720) "${q.label} HD" else q.label,
-            height = q.height,
-            format = ext.uppercase(Locale.US),
-            ext = ext,
-            mime = mime,
-            videoUrl = q.video.content,
-            audioUrl = q.audio?.content,
-            webm = webm
-        )
-    }
-    return SaveTargets(audio, video)
-}
+// What can be saved (SaveTarget, saveTargetsFor) lives in DownloadTargets.kt,
+// and the fast piece-by-piece downloading lives in ChunkFetcher.kt.
 
 fun formatSize(bytes: Long): String = when {
     bytes < 1_000_000 -> String.format(Locale.US, "%.0f KB", bytes / 1_000.0)
@@ -199,7 +122,14 @@ class SaveJob(
     var uri by mutableStateOf<Uri?>(null)
     var place by mutableStateOf<String?>(null)
 
+    /** Bytes of the file(s) that are safely on disk. */
     val bytes = AtomicLong(0)
+
+    /** Bytes that came over the network in this run (for the speed readout; resumed bytes are not counted). */
+    val session = AtomicLong(0)
+
+    /** Connections open right now, so a pause or cancel can close them at once. */
+    val calls: MutableSet<Call> = Collections.newSetFromMap(ConcurrentHashMap<Call, Boolean>())
 
     @Volatile
     var total: Long = 0
@@ -216,10 +146,7 @@ class SaveJob(
 
 private class JoinException(cause: Throwable) : Exception(cause.message, cause)
 
-private class Probe(val total: Long, val ranges: Boolean)
-
-private const val CHUNK = 2L * 1024 * 1024
-private const val WORKERS = 4
+private class ConvertException(cause: Throwable) : Exception(cause.message, cause)
 
 object SaveCenter {
     /** For screens. */
@@ -230,7 +157,6 @@ object SaveCenter {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val gate = Semaphore(2)
-    private val ids = AtomicInteger(0)
 
     fun liveJobs(): List<SaveJob> = live.toList()
 
@@ -242,7 +168,7 @@ object SaveCenter {
         offline: Boolean = false
     ): SaveJob {
         val app = context.applicationContext
-        val job = SaveJob(ids.incrementAndGet(), info.title, info.thumb, target, name, offline, info)
+        val job = SaveJob(DownloadPrefs.nextJobId(app), info.title, info.thumb, target, name, offline, info)
         jobs.add(0, job)
         live.add(job)
         DownloadService.start(app)
@@ -254,6 +180,7 @@ object SaveCenter {
 
     fun cancel(job: SaveJob) {
         job.task?.cancel()
+        job.calls.toList().forEach { runCatching { it.cancel() } }
         if (job.running) job.state = SaveState.Cancelled
     }
 
@@ -266,38 +193,39 @@ object SaveCenter {
     }
 
     private suspend fun execute(ctx: Context, job: SaveJob) {
-        val dir = File(ctx.cacheDir, "save").apply { mkdirs() }
-        val vFile = File(dir, "${job.id}-v.tmp")
-        val aFile = File(dir, "${job.id}-a.tmp")
+        val dir = File(ctx.filesDir, "partial").apply { mkdirs() }
+        val vFile = File(dir, "${job.id}-v.part")
+        val vMap = File(dir, "${job.id}-v.map")
+        val aFile = File(dir, "${job.id}-a.part")
+        val aMap = File(dir, "${job.id}-a.map")
         val mFile = File(dir, "${job.id}-m.tmp")
         try {
-            val t = job.target
-            val vUrl = t.videoUrl
-            val aUrl = t.audioUrl
+            var t = job.target
             job.state = SaveState.Downloading
 
-            val vProbe = vUrl?.let { withContext(Dispatchers.IO) { probeNow(it) } }
-            val aProbe = aUrl?.let { withContext(Dispatchers.IO) { probeNow(it) } }
-            job.total = listOfNotNull(vProbe, aProbe).sumOf { it.total.coerceAtLeast(0L) }
-
-            val free = StatFs(ctx.cacheDir.path).availableBytes
-            if (job.total > 0 && free < job.total * 2 + 64L * 1024 * 1024) {
-                throw IOException("ENOSPC: not enough free space")
+            // Stream links last a few hours. If one is refused, look the video up again and carry on.
+            var round = 0
+            while (true) {
+                try {
+                    pull(t, job, dir, vFile, vMap, aFile, aMap)
+                    break
+                } catch (e: ExpiredLinkException) {
+                    round++
+                    val source = job.source
+                    if (round > 1 || source == null) throw e
+                    YouTubeRepo.invalidate(source.url)
+                    val fresh = YouTubeRepo.load(source.url)
+                    t = findTarget(saveTargetsFor(fresh), job.target.key) ?: throw e
+                }
             }
 
-            if (vUrl != null && vProbe != null) fetch(vUrl, vFile, vProbe, job)
-            if (aUrl != null && aProbe != null) fetch(aUrl, aFile, aProbe, job)
-
+            val vUrl = t.videoUrl
+            val aUrl = t.audioUrl
             val result: File = when {
+                t.isAudio -> convertAudio(t, job, aFile, mFile)
                 vUrl != null && aUrl != null -> {
                     job.state = SaveState.Joining
-                    try {
-                        withContext(Dispatchers.IO) { mux(vFile, aFile, mFile, t.webm) { ensureActive() } }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        throw JoinException(e)
-                    }
+                    join(t, vFile, aFile, mFile)
                     vFile.delete()
                     aFile.delete()
                     mFile
@@ -324,11 +252,88 @@ object SaveCenter {
             job.state = SaveState.Failed
         } finally {
             vFile.delete()
+            vMap.delete()
             aFile.delete()
+            aMap.delete()
             mFile.delete()
             DownloadNotifications.finished(ctx, job)
         }
     }
+}
+
+/** Fetches the video stream and the sound stream (whichever the target has) at the same time. */
+private suspend fun pull(
+    t: SaveTarget,
+    job: SaveJob,
+    dir: File,
+    vFile: File,
+    vMap: File,
+    aFile: File,
+    aMap: File
+) {
+    val vUrl = t.videoUrl
+    val aUrl = t.audioUrl
+    val vProbe = vUrl?.let { withContext(Dispatchers.IO) { probeNow(it) } }
+    val aProbe = aUrl?.let { withContext(Dispatchers.IO) { probeNow(it) } }
+    job.total = listOfNotNull(vProbe, aProbe).sumOf { it.total.coerceAtLeast(0L) }
+    job.bytes.set(0)
+
+    val free = StatFs(dir.path).availableBytes
+    if (job.total > 0 && free < job.total * 2 + 64L * 1024 * 1024) {
+        throw IOException("ENOSPC: not enough free space")
+    }
+
+    coroutineScope {
+        val work = mutableListOf<Deferred<Unit>>()
+        if (vUrl != null && vProbe != null) work += async { fetchResumable(vUrl, vFile, vMap, vProbe, job) }
+        if (aUrl != null && aProbe != null) work += async { fetchResumable(aUrl, aFile, aMap, aProbe, job) }
+        work.awaitAll()
+    }
+}
+
+/** MP3, FLAC, WAV and .opus are made from the downloaded sound; M4A and .webm Opus are kept as they came. */
+private suspend fun convertAudio(t: SaveTarget, job: SaveJob, src: File, out: File): File {
+    val format = t.audioFormat ?: return src
+    val needsFfmpeg = format == AudioFormat.MP3 || format == AudioFormat.FLAC ||
+        format == AudioFormat.WAV || (format == AudioFormat.OPUS && t.ext == "opus")
+    if (!needsFfmpeg) return src
+    job.state = SaveState.Joining
+    try {
+        Ffmpeg.convertAudio(src, out, format, t.kbps)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        throw ConvertException(e)
+    }
+    src.delete()
+    return out
+}
+
+/**
+ * Joins video and sound. The phone's own joiner is fastest for H.264 + AAC (MP4) and VP9 + Opus (WebM);
+ * everything else goes to FFmpeg. If the first way fails, the other one gets a turn.
+ */
+private suspend fun join(t: SaveTarget, video: File, audio: File, out: File) {
+    val native = (t.ext == "mp4" && t.videoCodec == "h264") || (t.ext == "webm" && t.videoCodec == "vp9")
+    val order = if (native || !Ffmpeg.available) listOf(false, true) else listOf(true)
+    var last: Exception? = null
+    for (useFfmpeg in order) {
+        if (useFfmpeg && !Ffmpeg.available) continue
+        out.delete()
+        try {
+            if (useFfmpeg) {
+                Ffmpeg.mux(video, audio, out, t.ext)
+            } else {
+                withContext(Dispatchers.IO) { mux(video, audio, out, t.webm) { ensureActive() } }
+            }
+            return
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            last = e
+        }
+    }
+    throw JoinException(last ?: IOException("No way to join this quality."))
 }
 
 private fun explain(e: Throwable): String {
@@ -339,8 +344,12 @@ private fun explain(e: Throwable): String {
             "Playmate can't write to the folder you picked. Tap Change and pick it again."
         text.contains("ENOSPC") || text.contains("No space left") ->
             "There isn't enough free space on your phone for this file."
+        e is ConvertException ->
+            "Couldn't convert the sound to this format. Try M4A instead.  [$tech]"
         e is JoinException ->
             "This quality can't be joined on your phone. Try another quality.  [$tech]"
+        e is ExpiredLinkException ->
+            "YouTube's download link ran out and couldn't be renewed. Open the video again and retry.  [$tech]"
         e is IOException && text.startsWith("HTTP 4") ->
             "YouTube refused this download ($text). Open the video again and retry.  [$tech]"
         e is IOException ->
@@ -349,131 +358,7 @@ private fun explain(e: Throwable): String {
     }
 }
 
-// ------------------------------------------------------------------ size probe and download
-
-/** Size in bytes of a stream, or -1 when it can't be told. For showing sizes in the sheet. */
-suspend fun probeSize(url: String): Long = withContext(Dispatchers.IO) {
-    attempt { probeNow(url).total }.getOrDefault(-1L)
-}
-
-private fun probeNow(url: String): Probe {
-    val request = Request.Builder()
-        .url(url)
-        .header("User-Agent", PmDownloader.USER_AGENT)
-        .header("Range", "bytes=0-0")
-        .build()
-    return PmDownloader.client.newCall(request).execute().use { r ->
-        when (r.code) {
-            206 -> Probe(
-                r.header("Content-Range")?.substringAfterLast('/')?.toLongOrNull() ?: -1L,
-                true
-            )
-            200 -> Probe(r.body?.contentLength() ?: -1L, false)
-            else -> throw IOException("HTTP ${r.code}")
-        }
-    }
-}
-
-private fun writeFully(ch: FileChannel, buffer: ByteBuffer, start: Long) {
-    var at = start
-    while (buffer.hasRemaining()) at += ch.write(buffer, at)
-}
-
-private fun streamWhole(url: String, ch: FileChannel, onBytes: (Long) -> Unit, alive: () -> Unit) {
-    val request = Request.Builder()
-        .url(url)
-        .header("User-Agent", PmDownloader.USER_AGENT)
-        .build()
-    PmDownloader.client.newCall(request).execute().use { r ->
-        if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
-        val src = (r.body ?: throw IOException("Empty response")).byteStream()
-        val buf = ByteArray(64 * 1024)
-        var at = 0L
-        while (true) {
-            alive()
-            val n = src.read(buf)
-            if (n < 0) break
-            writeFully(ch, ByteBuffer.wrap(buf, 0, n), at)
-            at += n
-            onBytes(n.toLong())
-        }
-    }
-}
-
-private fun getRange(
-    url: String,
-    from: Long,
-    to: Long,
-    ch: FileChannel,
-    onBytes: (Long) -> Unit,
-    alive: () -> Unit
-) {
-    var pos = from
-    var failures = 0
-    while (pos <= to) {
-        alive()
-        try {
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", PmDownloader.USER_AGENT)
-                .header("Range", "bytes=$pos-$to")
-                .build()
-            PmDownloader.client.newCall(request).execute().use { r ->
-                if (r.code != 206) throw IOException("HTTP ${r.code}")
-                val src = (r.body ?: throw IOException("Empty response")).byteStream()
-                val buf = ByteArray(64 * 1024)
-                while (pos <= to) {
-                    alive()
-                    val n = src.read(buf)
-                    if (n < 0) break
-                    val take = minOf(n.toLong(), to - pos + 1).toInt()
-                    writeFully(ch, ByteBuffer.wrap(buf, 0, take), pos)
-                    pos += take
-                    onBytes(take.toLong())
-                }
-            }
-            if (pos <= to) throw IOException("Connection closed early")
-        } catch (e: IOException) {
-            failures++
-            if (failures >= 4) throw e
-            Thread.sleep(300L * failures)
-        }
-    }
-}
-
-/** Downloads one stream into [dest]: several connections at once, each taking the next 2 MB piece. */
-private suspend fun fetch(url: String, dest: File, probe: Probe, job: SaveJob) {
-    val count: (Long) -> Unit = { n -> job.bytes.addAndGet(n) }
-    RandomAccessFile(dest, "rw").use { raf ->
-        val ch = raf.channel
-        if (!probe.ranges || probe.total <= 0) {
-            coroutineScope {
-                withContext(Dispatchers.IO) {
-                    streamWhole(url, ch, count) { ensureActive() }
-                }
-            }
-        } else {
-            raf.setLength(probe.total)
-            coroutineScope {
-                val next = AtomicLong(0)
-                val workers = List(WORKERS) {
-                    async(Dispatchers.IO) {
-                        while (true) {
-                            ensureActive()
-                            val from = next.getAndAdd(CHUNK)
-                            if (from >= probe.total) break
-                            val to = minOf(from + CHUNK, probe.total) - 1
-                            getRange(url, from, to, ch, count) { ensureActive() }
-                        }
-                    }
-                }
-                workers.awaitAll()
-            }
-        }
-    }
-}
-
-// ------------------------------------------------------------------ joining video and audio
+// ------------------------------------------------------------------ joining video and audio on the phone
 
 private fun trackOf(extractor: MediaExtractor, prefix: String): Int {
     for (i in 0 until extractor.trackCount) {
