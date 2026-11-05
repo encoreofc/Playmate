@@ -22,6 +22,7 @@ class FeedPage(
 object FeedRepo {
     suspend fun home(): FeedPage = load("FEwhat_to_watch", "/")
     suspend fun history(): FeedPage = load("FEhistory", "/feed/history")
+    suspend fun subscriptions(): FeedPage = load("FEsubscriptions", "/feed/subscriptions")
     suspend fun more(token: String): FeedPage = parse(InnerTube.continuation(token))
 
     private suspend fun parse(root: JSONObject): FeedPage =
