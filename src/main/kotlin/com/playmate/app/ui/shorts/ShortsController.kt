@@ -267,7 +267,7 @@ class ShortsController(
         applySpeed()
     }
 
-    fun setClearScreen(on: Boolean) {
+    fun showClearScreen(on: Boolean) {
         clearScreen = on
     }
 
@@ -282,7 +282,7 @@ class ShortsController(
     }
 
     /** Turns captions on in [language] (null turns them off) for this Short and the ones around it. */
-    fun setCaptionLang(language: String?) {
+    fun chooseCaptionLang(language: String?) {
         captionLang = language
         PlaybackPrefs.setShortsCaptionLang(appContext, language)
         slots.forEach { it.caption = "" }
