@@ -27,6 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Videocam
@@ -57,30 +59,47 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.playmate.app.data.AudioFormat
+import com.playmate.app.data.DownloadPrefs
+import com.playmate.app.data.Ffmpeg
 import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.SaveCenter
 import com.playmate.app.data.SaveFolder
 import com.playmate.app.data.SaveTarget
+import com.playmate.app.data.estimatedBytes
+import com.playmate.app.data.findTarget
 import com.playmate.app.data.formatSize
 import com.playmate.app.data.probeSize
 import com.playmate.app.data.safeFileName
 import com.playmate.app.data.saveTargetsFor
+import com.playmate.app.data.sizeIsApproximate
 import com.playmate.app.ui.components.formatClock
 import com.playmate.app.ui.theme.Accent
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
-/** "Save to phone": pick video or audio, a quality, a name and a folder, then save it as a normal file. */
+/** "Save to phone": pick video or audio, a format and quality, a name and a folder, then save it as a normal file. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val targets = remember(info) { saveTargetsFor(info) }
 
-    var audioTab by remember { mutableStateOf(targets.video.isEmpty() && targets.audio.isNotEmpty()) }
+    // FFmpeg is checked in the background when the app starts; its formats appear once it is ready.
+    val ffmpegReady = Ffmpeg.available
+    val targets = remember(info, ffmpegReady) { saveTargetsFor(info) }
+
+    var audioTab by remember {
+        mutableStateOf(
+            targets.audio.isNotEmpty() && (targets.video.isEmpty() || DownloadPrefs.lastWasAudio(context))
+        )
+    }
     var picked by remember { mutableStateOf<SaveTarget?>(null) }
+    var more by remember { mutableStateOf(false) }
     var name by remember(info.url) { mutableStateOf(safeFileName(info.title)) }
     var renaming by remember { mutableStateOf(false) }
     var folderTick by remember { mutableIntStateOf(0) }
@@ -93,25 +112,33 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
         }
     }
 
-    LaunchedEffect(info.url) {
-        val urls = (targets.video + targets.audio).flatMap { it.urls }.distinct()
-        urls.forEach { url -> launch { sizes[url] = probeSize(url) } }
+    // Sizes are measured a few at a time, the ones on screen first.
+    LaunchedEffect(info.url, ffmpegReady) {
+        val gate = Semaphore(6)
+        val urls = (targets.video.filter { it.primary } + targets.audio + targets.video.filter { !it.primary })
+            .flatMap { it.urls }
+            .distinct()
+            .filter { it !in sizes }
+        urls.forEach { url -> launch { gate.withPermit { sizes[url] = probeSize(url) } } }
+    }
+
+    // What the sheet starts on: what was saved last time (the best there is on a first visit).
+    val defaultVideo = remember(targets) {
+        findTarget(targets, "v|${DownloadPrefs.videoHeight(context)}|0|*")?.takeIf { !it.isAudio }
+    }
+    val defaultAudio = remember(targets) {
+        val format = DownloadPrefs.audioFormat(context)
+        val kbps = DownloadPrefs.mp3Kbps(context)
+        targets.audio.firstOrNull {
+            it.audioFormat == format && (format != AudioFormat.MP3 || it.kbps == kbps)
+        } ?: targets.audio.firstOrNull { it.audioFormat == format }
+            ?: targets.audio.firstOrNull()
     }
 
     val list = if (audioTab) targets.audio else targets.video
-    val fallback = if (audioTab) {
-        list.firstOrNull()
-    } else {
-        list.firstOrNull { it.height in 1..720 } ?: list.lastOrNull()
-    }
-    val shown = picked?.takeIf { it in list } ?: fallback
-
-    fun sizeOf(target: SaveTarget): String {
-        val parts = target.urls.map { sizes[it] }
-        if (parts.any { it == null }) return "…"
-        val sum = parts.sumOf { (it ?: 0L).coerceAtLeast(0L) }
-        return if (sum > 0) formatSize(sum) else "—"
-    }
+    val visible = if (audioTab || more) list else list.filter { it.primary }
+    val extra = if (audioTab) 0 else list.count { !it.primary }
+    val shown = picked?.takeIf { it in list } ?: (if (audioTab) defaultAudio else defaultVideo) ?: list.firstOrNull()
 
     val place = remember(folderTick, audioTab) { SaveFolder.label(context, audioTab) }
     val customFolder = remember(folderTick) { SaveFolder.tree(context) != null }
@@ -119,6 +146,14 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
     val free = storage?.availableBytes ?: 0L
     val capacity = storage?.totalBytes ?: 0L
     val duration = remember { PlayerHolder.get(context).duration.takeIf { it > 0 } }
+    val durationSec = (duration ?: 0L) / 1000
+
+    /** "…" while measuring, "—" when unknown, "~" in front of a calculated size. */
+    fun sizeOf(target: SaveTarget): String {
+        val bytes = target.estimatedBytes(sizes, durationSec) ?: return "…"
+        if (bytes <= 0) return "—"
+        return (if (target.sizeIsApproximate()) "~" else "") + formatSize(bytes)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -274,21 +309,58 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                     list.isEmpty() -> Note(
                         "No ${if (audioTab) "audio" else "video"} files were found for this video."
                     )
-                    else -> list.chunked(2).forEach { pair ->
-                        Row(
-                            Modifier.padding(top = 10.dp).fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            pair.forEach { target ->
-                                OptionCard(
-                                    modifier = Modifier.weight(1f),
-                                    target = target,
-                                    size = sizeOf(target),
-                                    selected = target === shown,
-                                    onClick = { picked = target }
+                    else -> {
+                        val groups: Map<String, List<SaveTarget>> =
+                            if (audioTab) visible.groupBy { audioGroup(it) } else mapOf("" to visible)
+                        groups.forEach { (title, items) ->
+                            if (title.isNotEmpty()) SectionLabel(title)
+                            items.chunked(2).forEach { pair ->
+                                Row(
+                                    Modifier.padding(top = 10.dp).fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    pair.forEach { target ->
+                                        OptionCard(
+                                            modifier = Modifier.weight(1f),
+                                            target = target,
+                                            size = sizeOf(target),
+                                            selected = target === shown,
+                                            onClick = { picked = target }
+                                        )
+                                    }
+                                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
+                        if (extra > 0) {
+                            Row(
+                                Modifier
+                                    .padding(top = 12.dp)
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        more = !more
+                                        // Folding the extras away must not leave one of them quietly selected.
+                                        if (!more) picked = picked?.takeIf { it.primary }
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    if (more) "Fewer formats" else "More formats  ·  $extra",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(
+                                    if (more) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
                                 )
                             }
-                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                        if (audioTab && !ffmpegReady) {
+                            Note("MP3, FLAC and WAV aren't available on this phone right now.")
                         }
                     }
                 }
@@ -299,6 +371,16 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                 onClick = {
                     val choice = shown
                     if (choice != null) {
+                        // The next visit starts on what was just used.
+                        DownloadPrefs.setLastWasAudio(context, choice.isAudio)
+                        if (choice.isAudio) {
+                            choice.audioFormat?.let { DownloadPrefs.setAudioFormat(context, it) }
+                            if (choice.audioFormat == AudioFormat.MP3 && choice.kbps > 0) {
+                                DownloadPrefs.setMp3Kbps(context, choice.kbps)
+                            }
+                        } else {
+                            DownloadPrefs.setVideoHeight(context, choice.height)
+                        }
                         SaveCenter.start(context, info, choice, name)
                         Toast.makeText(
                             context,
@@ -347,6 +429,23 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
             dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } }
         )
     }
+}
+
+/** The heading an audio option sits under. */
+private fun audioGroup(target: SaveTarget): String = when (target.audioFormat) {
+    AudioFormat.MP3 -> "MP3  ·  plays on every device"
+    AudioFormat.M4A, AudioFormat.OPUS -> "Original sound  ·  no conversion, no quality loss"
+    else -> "Lossless and uncompressed  ·  big files"
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 18.dp)
+    )
 }
 
 @Composable
@@ -420,10 +519,19 @@ private fun OptionCard(
             }
         }
         Text(
-            "${target.format}  ·  $size",
+            target.detail.ifBlank { target.format },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 4.dp)
+        )
+        Text(
+            size,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = if (selected) Accent else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(top = 6.dp)
         )
     }
 }
