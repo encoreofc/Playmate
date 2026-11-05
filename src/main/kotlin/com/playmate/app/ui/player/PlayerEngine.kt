@@ -57,10 +57,12 @@ private fun mediaItemFor(info: PlayableInfo, url: String): MediaItem =
 private fun loadControlFor(forShorts: Boolean): DefaultLoadControl =
     DefaultLoadControl.Builder()
         .setBufferDurationsMs(
-            if (forShorts) 4_000 else 15_000,
-            if (forShorts) 15_000 else 50_000,
+            // Shorts: three players sit side by side, so each keeps only a few seconds. A neighbour must
+            // not hog the connection that the Short on screen needs.
+            if (forShorts) 2_000 else 15_000,
+            if (forShorts) 8_000 else 50_000,
             if (forShorts) 250 else 800,
-            if (forShorts) 1_000 else 2_000
+            if (forShorts) 800 else 2_000
         )
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
@@ -89,8 +91,9 @@ fun preferredMaxHeight(context: Context, shorts: Boolean): Int {
         manager.isActiveNetworkMetered
     }.getOrDefault(false)
     return when {
-        shorts && metered -> 480
-        shorts -> 720
+        // A Short starts sooner at 480p, a little sooner still on mobile data; the picker can go higher.
+        shorts && metered -> 360
+        shorts -> 480
         metered -> 720
         else -> 1080
     }
@@ -102,15 +105,15 @@ fun defaultQualityIndex(info: PlayableInfo, maxHeight: Int = 720): Int {
     return if (comfortable >= 0) comfortable else info.qualities.lastIndex
 }
 
-fun buildSource(info: PlayableInfo, qualityIndex: Int): MediaSource? {
+fun buildSource(info: PlayableInfo, qualityIndex: Int, cache: androidx.media3.datasource.DataSource.Factory? = null): MediaSource? {
     // A download kept inside the app: play the file from the phone.
     info.localUri?.let { local ->
         return ProgressiveMediaSource.Factory(FileDataSource.Factory())
             .createMediaSource(mediaItemFor(info, local))
     }
 
-    val http = OkHttpDataSource.Factory(PmDownloader.client)
-        .setUserAgent(PmDownloader.USER_AGENT)
+    val http: androidx.media3.datasource.DataSource.Factory = cache
+        ?: OkHttpDataSource.Factory(PmDownloader.client).setUserAgent(PmDownloader.USER_AGENT)
 
     if (info.live && info.hlsUrl != null) {
         return HlsMediaSource.Factory(http).createMediaSource(mediaItemFor(info, info.hlsUrl))
