@@ -33,7 +33,7 @@ fun HomeTopBar(onNotifications: () -> Unit, onSearch: () -> Unit) {
             .fillMaxWidth()
             .statusBarsPadding()
             .height(56.dp)
-            .padding(start = 16.dp, end = 4.dp),
+            .padding(start = 16.dp, end = 0.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         PlaymateMark()
@@ -51,10 +51,10 @@ fun HomeTopBar(onNotifications: () -> Unit, onSearch: () -> Unit) {
             modifier = Modifier.weight(1f)
         )
         IconButton(onClick = onNotifications) {
-            Icon(Icons.Outlined.Notifications, contentDescription = "Notifications", modifier = Modifier.size(26.dp))
+            Icon(Icons.Outlined.Notifications, contentDescription = "Notifications", modifier = Modifier.size(24.dp))
         }
         IconButton(onClick = onSearch) {
-            Icon(Icons.Outlined.Search, contentDescription = "Search", modifier = Modifier.size(26.dp))
+            Icon(Icons.Outlined.Search, contentDescription = "Search", modifier = Modifier.size(24.dp))
         }
     }
 }
