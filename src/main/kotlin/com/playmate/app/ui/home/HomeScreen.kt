@@ -203,7 +203,7 @@ fun HomeScreen(vm: AppViewModel) {
                             }
                             is ShelfEntry -> ShortsShelf(
                                 shorts = entry.shorts,
-                                onOpen = { vm.open(it) },
+                                onOpen = { vm.openShorts(entry.shorts, entry.shorts.indexOf(it)) },
                                 onShown = { vm.onImpression(it.url) }
                             )
                         }
