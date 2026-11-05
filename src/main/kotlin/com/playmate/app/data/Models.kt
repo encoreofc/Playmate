@@ -57,7 +57,11 @@ class PlayableInfo(
     /** Set when this is a download kept inside the app: the file to play, no internet needed. */
     val localUri: String? = null,
     /** Caption files (creator-made and auto-generated), one per language. */
-    val subtitles: List<SubtitleTrack> = emptyList()
+    val subtitles: List<SubtitleTrack> = emptyList(),
+    /** Every video stream that already has sound inside (all codecs), for the save sheets. */
+    val videoStreams: List<VideoStream> = emptyList(),
+    /** Every video-only stream (all codecs and qualities), joined with an audio stream when saving. */
+    val videoOnlyStreams: List<VideoStream> = emptyList()
 )
 
 class SearchPage(
