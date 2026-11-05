@@ -310,10 +310,10 @@ fun ShortsScreen(launch: ShortsLaunch, vm: AppViewModel) {
             },
             onDismiss = { showMore = false },
             captionLang = controller.captionLang,
-            onCaption = controller::setCaptionLang,
+            onCaption = controller::chooseCaptionLang,
             onClearScreen = {
                 showMore = false
-                controller.setClearScreen(true)
+                controller.showClearScreen(true)
             },
             onSaveToPlaylist = {
                 showMore = false
@@ -492,7 +492,7 @@ private fun ShortPage(
                         }
                         if (up == null || !isCurrent) return@awaitEachGesture
                         if (controller.clearScreen) {
-                            controller.setClearScreen(false)
+                            controller.showClearScreen(false)
                             return@awaitEachGesture
                         }
                         val close = (up.position - lastTapAtPosition).getDistance() < viewConfiguration.touchSlop * 6
