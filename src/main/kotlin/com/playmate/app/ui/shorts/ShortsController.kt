@@ -25,14 +25,21 @@ import com.playmate.app.data.attempt
 import com.playmate.app.data.friendly
 import com.playmate.app.data.videoIdOf
 import com.playmate.app.ui.player.buildSource
+import com.playmate.app.ui.player.ShortsCache
 import com.playmate.app.ui.player.createPlayer
 import com.playmate.app.ui.player.defaultQualityIndex
 import com.playmate.app.ui.player.preferredMaxHeight
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /**
  * Everything behind the Shorts screen except drawing it.
@@ -45,6 +52,10 @@ import kotlinx.coroutines.launch
  *  - three players sit in a ring: the Short on screen, the next one and the previous one. The next
  *    one is already prepared and holds its first picture, so a swipe shows video at once;
  *  - playback switches the moment a page is more than half on screen, not when the scroll ends;
+ *    everything heavier (handing players to new pages, lookups, preloading) waits until the scroll
+ *    has come to rest, so a swipe never competes with the work behind it;
+ *  - the first bytes of the next Shorts are fetched into a disk cache before the swipe, so the next
+ *    one starts from the phone's storage;
  *  - the endless list: the platform's own Shorts sequence first, then related Shorts, then search;
  *  - watch-history reports for the signed-in account.
  *
@@ -63,7 +74,11 @@ class ShortsController(
         var url by mutableStateOf<String?>(null)
         var firstFrame by mutableStateOf(false)
         var buffering by mutableStateOf(false)
+        /** Width / height as the player reports it once a picture has been decoded. */
         var aspect by mutableFloatStateOf(0f)
+
+        /** Width / height as the stream list says, known before the player has decoded anything. */
+        var knownAspect by mutableFloatStateOf(0f)
         var error by mutableStateOf<String?>(null)
         var quality by mutableIntStateOf(-1)
         var retries = 0
@@ -110,6 +125,13 @@ class ShortsController(
     private var watchJob: Job? = null
     private var watchSession: InnerTube.WatchSession? = null
     private var watchUrl: String? = null
+    private var started = false
+
+    /** At most this many stream lookups run at once; a fast scroll must not start a dozen. */
+    private val lookupGate = Semaphore(LOOKUPS_AT_ONCE)
+
+    /** First-bytes fetches of upcoming Shorts, by link (main thread only). */
+    private val warming = HashMap<String, Job>()
 
     /** Links whose streams are being looked up right now (main thread only). */
     private val resolving = HashSet<String>()
@@ -123,7 +145,10 @@ class ShortsController(
 
     // ------------------------------------------------------------------ paging and playback
 
-    /** [page] is now the one that is more than half on screen: it plays, the others wait. */
+    /**
+     * [page] is now the one that is more than half on screen: it plays, the others wait. This runs in
+     * the middle of the scroll, so it only does what is needed to switch the sound and picture.
+     */
     fun onPage(page: Int) {
         if (page !in items.indices) return
         val previous = current
@@ -132,14 +157,22 @@ class ShortsController(
         progress = 0f
         scrubbing = false
         if (previous != page) rewind(previous)
-        sync()
-        loadMore()
+        if (!started) {
+            started = true
+            sync()
+        } else {
+            assign(page)
+            applyPlayState()
+        }
     }
 
-    /** The scroll has come to rest on [page]: now it counts as watched. */
+    /** The scroll has come to rest on [page]: now the neighbours get their players, and it counts as watched. */
     fun onSettled(page: Int) {
         val item = items.getOrNull(page) ?: return
-        if (page == current) restartWatch(item)
+        if (page != current) return
+        sync()
+        loadMore()
+        restartWatch(item)
     }
 
     fun togglePause() {
@@ -211,6 +244,8 @@ class ShortsController(
 
     fun release() {
         finishWatch()
+        warming.values.forEach { it.cancel() }
+        warming.clear()
         slots.forEach { runCatching { it.player.release() } }
     }
 
@@ -230,6 +265,7 @@ class ShortsController(
             val keep = items.subList(from, to).map { it.url }.toHashSet()
             infos.keys.retainAll(keep)
         }
+        trimWarming()
         applyPlayState()
     }
 
@@ -241,6 +277,7 @@ class ShortsController(
         slot.firstFrame = false
         slot.buffering = true
         slot.aspect = 0f
+        slot.knownAspect = 0f
         slot.error = null
         slot.retries = 0
         slot.quality = -1
@@ -263,6 +300,38 @@ class ShortsController(
             val delayMs = if (offset <= 1) 0L else FAR_DELAY_MS
             resolve(item, delayMs)
             if (offset <= META_AHEAD) scheduleMeta(item, delayMs)
+            if (offset in 1..WARM_AHEAD) (infos[item.url] as? Load.Ready)?.let { warm(item.url, it.data) }
+        }
+    }
+
+    /**
+     * Fetches the first bytes of the picture and sound of a Short that is coming up into the disk cache.
+     * Only the next ones, and only a little: the Short on screen keeps the connection to itself.
+     */
+    private fun warm(url: String, info: PlayableInfo) {
+        if (info.localUri != null || info.live || warming.containsKey(url)) return
+        val quality = info.qualities.getOrNull(defaultQualityIndex(info, preferredMaxHeight(appContext, true))) ?: return
+        val fetches = listOfNotNull(quality.video.content, quality.audio?.content)
+            .map { ShortsCache.fetchHead(appContext, it) }
+        val job = scope.launch(Dispatchers.IO) {
+            coroutineScope { fetches.map { async { it.download() } }.awaitAll() }
+        }
+        job.invokeOnCompletion { cause -> if (cause != null) fetches.forEach { it.cancel() } }
+        warming[url] = job
+    }
+
+    /** Stops fetching for Shorts the viewer has moved away from. */
+    private fun trimWarming() {
+        val iterator = warming.entries.iterator()
+        while (iterator.hasNext()) {
+            val (url, job) = iterator.next()
+            val index = items.indexOfFirst { it.url == url }
+            if (job.isCompleted) {
+                if (index < current - 1 || index > current + INFO_AHEAD) iterator.remove()
+            } else if (index < current || index > current + WARM_AHEAD) {
+                job.cancel()
+                iterator.remove()
+            }
         }
     }
 
@@ -295,11 +364,22 @@ class ShortsController(
                     return@launch
                 }
             }
-            val result: Load<PlayableInfo> = attempt { YouTubeRepo.load(url) }
-                .fold({ Load.Ready(it) }, { Load.Failed(friendly(it)) })
+            val result: Load<PlayableInfo>? = lookupGate.withPermit<Load<PlayableInfo>?> {
+                // The viewer may have scrolled on while this one waited its turn.
+                if (!wanted(url)) {
+                    null
+                } else {
+                    attempt { YouTubeRepo.load(url) }.fold({ Load.Ready(it) }, { Load.Failed(friendly(it)) })
+                }
+            }
             resolving.remove(url)
+            if (result == null) return@launch
             infos[url] = result
             slots.firstOrNull { it.url == url }?.let { slot -> begin(slot, result) }
+            if (result is Load.Ready) {
+                val index = items.indexOfFirst { it.url == url }
+                if (index in current + 1..current + WARM_AHEAD) warm(url, result.data)
+            }
         }
     }
 
@@ -316,13 +396,16 @@ class ShortsController(
     }
 
     private fun start(slot: Slot, info: PlayableInfo, quality: Int, resumeMs: Long = 0L) {
-        val source = buildSource(info, quality)
+        val source = buildSource(info, quality, ShortsCache.dataSourceFactory(appContext))
         if (source == null) {
             slot.error = "No playable stream was found for this Short."
             return
         }
         slot.quality = quality
         slot.error = null
+        info.qualities.getOrNull(quality)?.video?.let { video ->
+            if (video.width > 0 && video.height > 0) slot.knownAspect = video.width.toFloat() / video.height
+        }
         slot.player.volume = if (muted) 0f else 1f
         slot.player.setPlaybackSpeed(speed)
         if (resumeMs > 0L) slot.player.setMediaSource(source, resumeMs) else slot.player.setMediaSource(source)
@@ -478,7 +561,13 @@ class ShortsController(
         const val PREFETCH_AHEAD = 6
 
         /** Streams are looked up for the Short on screen and this many after it. */
-        const val INFO_AHEAD = 3
+        const val INFO_AHEAD = 4
+
+        /** The first bytes are fetched ahead for this many Shorts after the one on screen. */
+        const val WARM_AHEAD = 2
+
+        /** Stream lookups running at the same time. */
+        const val LOOKUPS_AT_ONCE = 3
 
         /** Page data (likes, channel, subscription) is fetched for this many Shorts after the one on screen. */
         const val META_AHEAD = 2
