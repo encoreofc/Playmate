@@ -16,17 +16,23 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +42,7 @@ import coil.compose.AsyncImage
 import com.playmate.app.AppViewModel
 import com.playmate.app.data.Load
 import com.playmate.app.ui.components.ErrorState
+import com.playmate.app.ui.components.ThemeDialog
 import com.playmate.app.ui.components.SkeletonCard
 import com.playmate.app.ui.components.VideoRow
 
@@ -124,6 +131,8 @@ fun YouScreen(vm: AppViewModel) {
 
 @Composable
 private fun AccountHeader(vm: AppViewModel) {
+    var showTheme by remember { mutableStateOf(false) }
+    if (showTheme) ThemeDialog(onDismiss = { showTheme = false })
     Row(
         Modifier
             .fillMaxWidth()
@@ -163,6 +172,9 @@ private fun AccountHeader(vm: AppViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+        IconButton(onClick = { showTheme = true }) {
+            Icon(Icons.Outlined.Settings, contentDescription = "Appearance", modifier = Modifier.size(26.dp))
         }
         if (vm.signedIn) {
             TextButton(onClick = vm::signOut) { Text("Sign out") }
