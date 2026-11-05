@@ -1,5 +1,8 @@
 package com.playmate.app.ui.theme
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -8,42 +11,55 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import com.playmate.app.data.ThemeMode
+import com.playmate.app.data.ThemePrefs
 
 val Accent = Color(0xFFFF4A2B)
+
+/** The near-black the dark theme sits on. Glass surfaces are lit from this. */
+val Ink = Color(0xFF08090C)
+
+/** True while the dark theme is on screen. Glass and other custom surfaces read this. */
+val LocalPmDark = staticCompositionLocalOf { true }
 
 private val DarkColors = darkColorScheme(
     primary = Accent,
     onPrimary = Color.White,
-    background = Color(0xFF0E0F12),
-    onBackground = Color(0xFFF2F1EE),
-    surface = Color(0xFF0E0F12),
-    onSurface = Color(0xFFF2F1EE),
-    surfaceVariant = Color(0xFF1B1D22),
-    onSurfaceVariant = Color(0xFF9B9DA5),
-    surfaceContainer = Color(0xFF15171B),
-    surfaceContainerHigh = Color(0xFF1B1D22),
-    outline = Color(0xFF2C2E35),
-    outlineVariant = Color(0xFF23252B)
+    background = Ink,
+    onBackground = Color(0xFFF5F5F7),
+    surface = Ink,
+    onSurface = Color(0xFFF5F5F7),
+    surfaceVariant = Color(0xFF1C1D22),
+    onSurfaceVariant = Color(0xFFA1A1AA),
+    surfaceContainer = Color(0xFF111216),
+    surfaceContainerHigh = Color(0xFF1C1D22),
+    outline = Color(0xFF2E3037),
+    outlineVariant = Color(0xFF24262C)
 )
 
 private val LightColors = lightColorScheme(
     primary = Accent,
     onPrimary = Color.White,
-    background = Color(0xFFFAF9F7),
-    onBackground = Color(0xFF14151A),
-    surface = Color(0xFFFAF9F7),
-    onSurface = Color(0xFF14151A),
-    surfaceVariant = Color(0xFFEDEBE6),
-    onSurfaceVariant = Color(0xFF686A72),
-    surfaceContainer = Color(0xFFF3F1ED),
-    surfaceContainerHigh = Color(0xFFEDEBE6),
-    outline = Color(0xFFD9D6CF),
-    outlineVariant = Color(0xFFE6E3DC)
+    background = Color(0xFFFFFFFF),
+    onBackground = Color(0xFF0F0F0F),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF0F0F0F),
+    surfaceVariant = Color(0xFFF2F2F2),
+    onSurfaceVariant = Color(0xFF606060),
+    surfaceContainer = Color(0xFFF7F7F7),
+    surfaceContainerHigh = Color(0xFFF0F0F0),
+    outline = Color(0xFFD3D3D3),
+    outlineVariant = Color(0xFFE5E5E5)
 )
 
 private val PmTypography = Typography(
@@ -66,12 +82,43 @@ private val PmShapes = Shapes(
     extraLarge = RoundedCornerShape(28.dp)
 )
 
+/** Light, dark or the phone's own setting, as chosen in [ThemePrefs]. */
 @Composable
 fun PlaymateTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
-        typography = PmTypography,
-        shapes = PmShapes,
-        content = content
-    )
+    val dark = when (ThemePrefs.mode) {
+        ThemeMode.System -> isSystemInDarkTheme()
+        ThemeMode.Light -> false
+        ThemeMode.Dark -> true
+    }
+
+    // The clock, battery and navigation icons must stay readable on whichever background is showing.
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = view.context.findActivity()?.window
+            if (window != null) {
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = !dark
+                controller.isAppearanceLightNavigationBars = !dark
+            }
+        }
+    }
+
+    CompositionLocalProvider(LocalPmDark provides dark) {
+        MaterialTheme(
+            colorScheme = if (dark) DarkColors else LightColors,
+            typography = PmTypography,
+            shapes = PmShapes,
+            content = content
+        )
+    }
+}
+
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
 }
