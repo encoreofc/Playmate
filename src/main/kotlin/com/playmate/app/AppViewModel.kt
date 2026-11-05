@@ -46,7 +46,7 @@ import com.playmate.app.ui.player.ActivePlayback
 import com.playmate.app.ui.player.PlaybackRecovery
 import com.playmate.app.ui.player.setVideoEnabled
 
-enum class Tab { Home, Search, Downloads, You }
+enum class Tab { Home, Search, Subscriptions, Downloads, You }
 
 /** The channel page on screen. [tab] indexes [ChannelInfo.tabs]; [startTab] is the one that came with the first answer. */
 data class ChannelState(
@@ -379,6 +379,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         trackingNote = null
         trackingInfo = null
         history = Load.Ready(emptyList())
+        subsFeed = Load.Loading
+        subsToken = null
         feed = Load.Loading
         loadFeed()
     }
@@ -426,6 +428,52 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 .onFailure { historyToken = null }
             loadingMoreHistory = false
+        }
+    }
+
+    // ---------------------------------------------------------------- subscriptions feed
+
+    var subsFeed by mutableStateOf<Load<List<VideoItem>>>(Load.Loading); private set
+    var subsToken by mutableStateOf<String?>(null); private set
+    var subsRefreshing by mutableStateOf(false); private set
+    private var subsJob: Job? = null
+    private var loadingMoreSubs = false
+
+    /** Latest videos from the channels the signed-in account subscribes to. [force]: pull-to-refresh. */
+    fun loadSubs(force: Boolean = false) {
+        if (!Session.loggedIn) return
+        if (!force && subsFeed is Load.Ready) return
+        subsJob?.cancel()
+        subsJob = viewModelScope.launch {
+            if (force) subsRefreshing = true else subsFeed = Load.Loading
+            attempt { FeedRepo.subscriptions() }
+                .onSuccess {
+                    subsToken = it.token
+                    subsFeed = if (it.items.isEmpty()) Load.Failed("No new videos from your subscriptions.")
+                    else Load.Ready(it.items)
+                }
+                .onFailure {
+                    if (subsFeed !is Load.Ready) subsFeed = Load.Failed(friendly(it))
+                }
+            subsRefreshing = false
+        }
+    }
+
+    fun loadMoreSubs() {
+        val token = subsToken ?: return
+        val current = (subsFeed as? Load.Ready)?.data ?: return
+        if (loadingMoreSubs || subsRefreshing) return
+        loadingMoreSubs = true
+        viewModelScope.launch {
+            attempt { FeedRepo.more(token) }
+                .onSuccess { page ->
+                    val latest = (subsFeed as? Load.Ready)?.data ?: current
+                    val known = latest.map { it.url }.toHashSet()
+                    subsFeed = Load.Ready(latest + page.items.filter { it.url !in known })
+                    subsToken = page.token
+                }
+                .onFailure { subsToken = null }
+            loadingMoreSubs = false
         }
     }
 
