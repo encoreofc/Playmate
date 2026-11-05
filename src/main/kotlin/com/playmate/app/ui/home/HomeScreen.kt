@@ -1,5 +1,6 @@
 package com.playmate.app.ui.home
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.ContentScale
@@ -50,7 +52,7 @@ import com.playmate.app.AppViewModel
 import com.playmate.app.Tab
 import com.playmate.app.data.Load
 import com.playmate.app.ui.components.ErrorState
-import com.playmate.app.ui.components.PlaymateMark
+import com.playmate.app.ui.components.HomeTopBar
 import com.playmate.app.ui.components.SkeletonCard
 import com.playmate.app.ui.components.VideoCard
 
@@ -96,6 +98,7 @@ private fun buildEntries(items: List<VideoItem>, hasMore: Boolean): List<Entry> 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(vm: AppViewModel) {
+    val context = LocalContext.current
     val hasMore = vm.feedToken != null
     val entries = remember(vm.feed, hasMore) {
         (vm.feed as? Load.Ready)?.data?.let { buildEntries(it, hasMore) }.orEmpty()
@@ -107,47 +110,12 @@ fun HomeScreen(vm: AppViewModel) {
     ) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
             item {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .height(48.dp)
-                        .padding(start = 12.dp, end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    PlaymateMark()
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = buildAnnotatedString {
-                            append("Play")
-                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary)) { append("mate") }
-                        },
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontSize = 21.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = (-0.8).sp
-                        ),
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = { vm.select(Tab.Search); vm.startEditing() }) {
-                        Icon(Icons.Rounded.Search, contentDescription = "Search", modifier = Modifier.size(26.dp))
-                    }
-                    if (vm.signedIn) {
-                        AsyncImage(
-                            model = vm.account?.avatar,
-                            contentDescription = "Your account",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .padding(start = 4.dp, end = 8.dp)
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable { vm.select(Tab.You) }
-                        )
-                    } else {
-                        TextButton(onClick = vm::openLogin) { Text("Sign in") }
-                    }
-                }
+                HomeTopBar(
+                    onNotifications = {
+                        Toast.makeText(context, "Notifications are coming soon", Toast.LENGTH_SHORT).show()
+                    },
+                    onSearch = { vm.select(Tab.Search); vm.startEditing() }
+                )
             }
 
             if (vm.feedChips.isNotEmpty()) {
