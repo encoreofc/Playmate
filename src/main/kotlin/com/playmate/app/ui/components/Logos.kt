@@ -21,16 +21,16 @@ private const val SHORTS_PATH =
         "c-1.83,0.97 -2.53,3.24 -1.56,5.07 0.97,1.83 3.24,2.53 5.07,1.56l8.5,-4.5c1.29,-0.68 2.06,-2.04 1.99,-3.49" +
         " -0.07,-1.42 -0.94,-2.68 -2.23,-3.25zM10,14.65v-5.3L15,12l-5,2.65z"
 
-/** The real YouTube Shorts logo, drawn from its SVG path (24x24 design grid). */
+/** The real YouTube Shorts logo, drawn from its SVG path (24x24 design grid). Red unless [color] says otherwise. */
 @Composable
-fun ShortsLogo(size: Dp = 28.dp, modifier: Modifier = Modifier) {
+fun ShortsLogo(size: Dp = 28.dp, modifier: Modifier = Modifier, color: Color = Color(0xFFFF0000)) {
     val path = remember {
         PathParser().parsePathString(SHORTS_PATH).toPath().apply { fillType = PathFillType.EvenOdd }
     }
     Canvas(modifier.size(size)) {
         val s = this.size.minDimension / 24f
         val scaled = Path().apply { addPath(path); transform(androidx.compose.ui.graphics.Matrix().apply { scale(s, s) }) }
-        drawPath(scaled, Color(0xFFFF0000))
+        drawPath(scaled, color)
     }
 }
 
