@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -108,9 +109,15 @@ fun PlaymateTheme(content: @Composable () -> Unit) {
         MaterialTheme(
             colorScheme = if (dark) DarkColors else LightColors,
             typography = PmTypography,
-            shapes = PmShapes,
-            content = content
-        )
+            shapes = PmShapes
+        ) {
+            // Text outside a Scaffold (the video page, Shorts, sign-in) takes its colour from here.
+            // Without this it falls back to black, which vanishes on the dark theme.
+            CompositionLocalProvider(
+                LocalContentColor provides MaterialTheme.colorScheme.onBackground,
+                content = content
+            )
+        }
     }
 }
 
