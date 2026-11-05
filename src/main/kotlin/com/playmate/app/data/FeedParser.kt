@@ -259,8 +259,21 @@ object FeedParser {
         val thumb = thumbs?.optJSONObject(thumbs.length() - 1)?.optString("url")
             ?.takeIf { it.isNotBlank() } ?: fallbackThumb(id)
 
+        // History, search and playlists list Shorts as ordinary cards; YouTube marks them with a reel
+        // endpoint, a /shorts/ link or a "SHORTS" badge. They must open in the Shorts player.
+        var short = findObject(o, "reelWatchEndpoint") != null ||
+            o.optJSONObject("navigationEndpoint")?.optJSONObject("commandMetadata")
+                ?.optJSONObject("webCommandMetadata")?.optString("url").orEmpty().contains("/shorts/")
+        if (overlays != null) {
+            for (i in 0 until overlays.length()) {
+                val style = overlays.optJSONObject(i)
+                    ?.optJSONObject("thumbnailOverlayTimeStatusRenderer")?.optString("style")
+                if (style.equals("SHORTS", ignoreCase = true)) short = true
+            }
+        }
+
         return VideoItem(
-            url = watchUrl(id),
+            url = if (short) shortUrl(id) else watchUrl(id),
             title = title,
             channel = channel,
             durationSec = duration,
@@ -318,8 +331,10 @@ object FeedParser {
         val thumb = sources?.optJSONObject(sources.length() - 1)?.optString("url")
             ?.takeIf { it.isNotBlank() } ?: fallbackThumb(id)
 
+        val short = findObject(o, "reelWatchEndpoint") != null
+
         return VideoItem(
-            url = watchUrl(id),
+            url = if (short) shortUrl(id) else watchUrl(id),
             title = title,
             channel = channel,
             durationSec = duration,
