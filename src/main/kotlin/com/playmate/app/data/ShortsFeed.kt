@@ -76,6 +76,7 @@ object ShortsFeed {
             val id = endpoint.optString("videoId")
             if (!ID.matches(id) || id == skip || !seen.add(id)) continue
             endpoint.optString("sequenceParams").takeIf { it.isNotBlank() }?.let { lastSequence = it }
+            feedbackOf(entry)?.let { ShortFeedback.put(id, it) }
             val thumbs = endpoint.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
             items += VideoItem(
                 url = "https://www.youtube.com/shorts/$id",
@@ -96,4 +97,39 @@ object ShortsFeed {
 
     private fun isAd(entry: JSONObject): Boolean =
         findString(entry, "videoType") == "REEL_VIDEO_TYPE_AD" || findObject(entry, "adClientParams") != null
+
+    /**
+     * The "Not interested" and "Don't recommend this channel" feedback tokens that YouTube attaches to a
+     * reel's menu, when it attaches them. Read defensively: a Short without them simply has no server-side
+     * feedback option (the screen still skips it).
+     */
+    private fun feedbackOf(entry: JSONObject): ShortFeedback.Tokens? {
+        var notInterested: String? = null
+        var dontRecommend: String? = null
+        val rows = findAllObjects(entry, "menuServiceItemRenderer") + findAllObjects(entry, "menuNavigationItemRenderer")
+        for (row in rows) {
+            val token = findString(row, "feedbackToken") ?: continue
+            val label = ytText(row.optJSONObject("text")).lowercase()
+            val icon = row.optJSONObject("icon")?.optString("iconType").orEmpty()
+            when {
+                label.contains("recommend") -> if (dontRecommend == null) dontRecommend = token
+                label.contains("interested") || icon == "NOT_INTERESTED" -> if (notInterested == null) notInterested = token
+            }
+        }
+        return if (notInterested == null && dontRecommend == null) null else ShortFeedback.Tokens(notInterested, dontRecommend)
+    }
+}
+
+/** Feedback tokens of the Shorts seen in the sequence, by video id (kept in memory only). */
+object ShortFeedback {
+    class Tokens(val notInterested: String?, val dontRecommend: String?)
+
+    private val map = java.util.concurrent.ConcurrentHashMap<String, Tokens>()
+
+    fun put(videoId: String, tokens: Tokens) {
+        if (map.size > 400) map.clear()
+        map[videoId] = tokens
+    }
+
+    fun get(videoId: String?): Tokens? = videoId?.let { map[it] }
 }
