@@ -99,7 +99,6 @@ import com.playmate.app.ui.components.SkeletonLines
 import com.playmate.app.ui.components.VideoRow
 import com.playmate.app.ui.components.findActivity
 import com.playmate.app.ui.components.formatClock
-import com.playmate.app.ui.components.metaLine
 import com.playmate.app.ui.theme.Accent
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -731,11 +730,26 @@ private fun Details(
         return
     }
 
+    // The first comment is shown on the card under the video, so load it as soon as the video is known.
+    val metaId = vm.meta?.videoId
+    LaunchedEffect(metaId) { if (metaId != null) vm.loadComments() }
+
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         when (val state = playing.info) {
             is Load.Loading -> {
                 if (playing.seed.title.isNotBlank()) {
-                    item { Header(playing.seed.title, playing.seed.channel, playing.seed.views, playing.seed.uploaded) }
+                    item {
+                        TitleBlock(
+                            title = playing.seed.title,
+                            channel = playing.seed.channel,
+                            views = playing.seed.views,
+                            uploaded = playing.seed.uploaded,
+                            likes = null,
+                            description = "",
+                            expanded = false,
+                            onToggle = {}
+                        )
+                    }
                 } else {
                     item { SkeletonLines() }
                 }
@@ -745,38 +759,29 @@ private fun Details(
 
             is Load.Ready -> {
                 val data = state.data
-                item { Header(data.title, "", data.views, data.uploaded) }
+                item {
+                    TitleBlock(
+                        title = data.title,
+                        channel = "",
+                        views = data.views,
+                        uploaded = data.uploaded,
+                        likes = vm.meta?.likeCount,
+                        description = data.description,
+                        expanded = expanded,
+                        onToggle = { expanded = !expanded }
+                    )
+                }
                 item { ChannelRow(vm, data, vm.meta, data.channel) }
                 item { ActionRow(vm, vm.meta, onComments = onComments, onShare = onShare, onSave = onSave) }
 
-                if (data.description.isNotBlank()) {
-                    item {
-                        Column(
-                            Modifier
-                                .padding(horizontal = 12.dp)
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable { expanded = !expanded }
-                                .padding(14.dp)
-                        ) {
-                            Text(
-                                data.description,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = if (expanded) Int.MAX_VALUE else 3,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                if (expanded) "Show less" else "Show more",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
-                        }
-                    }
+                item {
+                    CommentsCard(
+                        count = vm.commentsTotal ?: vm.meta?.commentCount,
+                        preview = (vm.comments as? Load.Ready)?.data?.firstOrNull { !it.isReply },
+                        state = vm.comments,
+                        onClick = onComments
+                    )
                 }
-
-                item { CommentsCard(vm.commentsTotal ?: vm.meta?.commentCount, onClick = onComments) }
 
                 if (data.related.isNotEmpty()) {
                     item {
@@ -792,19 +797,5 @@ private fun Details(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun Header(title: String, channel: String, views: Long, uploaded: String?) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
-        Text(title, style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(6.dp))
-        Text(
-            metaLine(channel, views, uploaded),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(2.dp))
     }
 }
