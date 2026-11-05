@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -33,6 +36,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -45,6 +50,7 @@ import com.playmate.app.AppViewModel
 import com.playmate.app.Tab
 import com.playmate.app.data.Load
 import com.playmate.app.ui.components.ErrorState
+import com.playmate.app.ui.components.PlaymateMark
 import com.playmate.app.ui.components.SkeletonCard
 import com.playmate.app.ui.components.VideoCard
 
@@ -103,20 +109,28 @@ fun HomeScreen(vm: AppViewModel) {
             item {
                 Row(
                     Modifier
+                        .fillMaxWidth()
                         .statusBarsPadding()
-                        .padding(start = 16.dp, end = 6.dp, top = 6.dp),
+                        .height(48.dp)
+                        .padding(start = 12.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    PlaymateMark()
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         text = buildAnnotatedString {
                             append("Play")
                             withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary)) { append("mate") }
                         },
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = (-0.8).sp
+                        ),
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(onClick = { vm.select(Tab.Search); vm.startEditing() }) {
-                        Icon(Icons.Rounded.Search, contentDescription = "Search")
+                        Icon(Icons.Rounded.Search, contentDescription = "Search", modifier = Modifier.size(26.dp))
                     }
                     if (vm.signedIn) {
                         AsyncImage(
@@ -124,8 +138,8 @@ fun HomeScreen(vm: AppViewModel) {
                             contentDescription = "Your account",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .padding(horizontal = 8.dp)
-                                .size(32.dp)
+                                .padding(start = 4.dp, end = 8.dp)
+                                .size(30.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.surfaceVariant)
                                 .clickable { vm.select(Tab.You) }
@@ -139,20 +153,20 @@ fun HomeScreen(vm: AppViewModel) {
             if (vm.feedChips.isNotEmpty()) {
                 item {
                     LazyRow(
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         itemsIndexed(vm.feedChips) { index, chip ->
                             val selected = index == vm.selectedChip
                             Box(
                                 Modifier
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(8.dp))
                                     .background(
                                         if (selected) MaterialTheme.colorScheme.onBackground
                                         else MaterialTheme.colorScheme.surfaceVariant
                                     )
                                     .clickable { vm.selectChip(index) }
-                                    .padding(horizontal = 12.dp, vertical = 7.dp)
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
                                 Text(
                                     chip.label,
