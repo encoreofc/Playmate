@@ -37,6 +37,7 @@ import com.playmate.app.ui.downloads.DownloadsScreen
 import com.playmate.app.ui.home.HomeScreen
 import com.playmate.app.ui.player.PlayerScreen
 import com.playmate.app.ui.search.SearchScreen
+import com.playmate.app.ui.shorts.ShortsScreen
 
 @Composable
 fun AppRoot(vm: AppViewModel) {
@@ -147,6 +148,9 @@ fun AppRoot(vm: AppViewModel) {
                 )
             }
         }
+
+        // Full-screen Shorts (above everything except the sign-in page).
+        vm.shorts?.let { launch -> ShortsScreen(launch, vm) }
 
         if (vm.showLogin) {
             LoginScreen(onCookies = vm::onSignedIn, onCancel = vm::cancelLogin)
