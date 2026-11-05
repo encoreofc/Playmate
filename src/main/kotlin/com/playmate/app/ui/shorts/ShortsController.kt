@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
  *  - three players sit in a ring: the Short on screen, the next one and the previous one. The next
  *    one is already prepared and holds its first picture, so a swipe shows video at once;
  *  - playback switches the moment a page is more than half on screen, not when the scroll ends;
- *  - the endless list: YouTube's own Shorts sequence first, then related Shorts, then search;
+ *  - the endless list: the platform's own Shorts sequence first, then related Shorts, then search;
  *  - watch-history reports for the signed-in account.
  *
  * Must be created and used on the main thread.
@@ -162,6 +162,8 @@ class ShortsController(
 
     fun retry(page: Int) {
         val item = items.getOrNull(page) ?: return
+        // A stored link may be the thing that stopped working: look the streams up again.
+        YouTubeRepo.invalidate(item.url)
         infos.remove(item.url)
         resolving.remove(item.url)
         slotFor(page).url = null
@@ -357,6 +359,7 @@ class ShortsController(
                 slot.retries++
                 start(slot, info, next)
             } else {
+                YouTubeRepo.invalidate(url)
                 slot.error = "This Short couldn't be played."
             }
         }
@@ -391,7 +394,7 @@ class ShortsController(
     }
 
     /**
-     * YouTube's own sequence. A saved token continues it; when that gives nothing new (or the token
+     * The platform's own sequence. A saved token continues it; when that gives nothing new (or the token
      * is refused) the sequence is started again from the last Short, so it heals itself.
      */
     private suspend fun fromSequence(): List<VideoItem> {
@@ -432,7 +435,7 @@ class ShortsController(
 
     // ------------------------------------------------------------------ watch history
 
-    /** After a short pause on a Short, reports the watch to YouTube so it reaches history and recommendations. */
+    /** After a short pause on a Short, reports the watch so it reaches the account's history and recommendations. */
     private fun restartWatch(item: VideoItem) {
         finishWatch()
         if (!Session.loggedIn) return
