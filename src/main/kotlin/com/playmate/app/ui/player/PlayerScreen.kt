@@ -105,6 +105,7 @@ import com.playmate.app.ui.theme.Accent
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import androidx.media3.common.C
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -191,6 +192,24 @@ fun PlayerScreen(
         if (info?.live == true) return
         val limit = if (player.duration > 0) player.duration else Long.MAX_VALUE
         player.seekTo((player.currentPosition + deltaMs).coerceIn(0L, limit))
+    }
+
+    val togglePlay: () -> Unit = {
+        if (isPlaying) player.pause() else {
+            if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+            player.play()
+        }
+    }
+    val scrubStart: (Float) -> Unit = {
+        dragging = true
+        dragValue = it
+    }
+    val scrubMove: (Float) -> Unit = { dragValue = it }
+    val scrubEnd: (Float) -> Unit = { value ->
+        val target = (value * duration).toLong()
+        player.seekTo(target)
+        position = target
+        dragging = false
     }
 
     // Double tap jumps 10 s; while the feedback is still showing, single taps keep jumping (as on YouTube).
@@ -349,7 +368,15 @@ fun PlayerScreen(
 
     // Background and mini-player: audio keeps playing, only the video track is switched off.
     var started by remember { mutableStateOf(true) }
-    LaunchedEffect(expanded, started) { player.setVideoEnabled(expanded && started) }
+    // Listen-only mode keeps the picture off even while the player is on screen: the sound is all that is wanted.
+    val audioMode = AudioMode.on
+    LaunchedEffect(expanded, started, audioMode) { player.setVideoEnabled(expanded && started && !audioMode) }
+    // The picture grows a little taller to give the cassette room, and shrinks back with the video.
+    val stageAspect by animateFloatAsState(
+        targetValue = if (audioMode) 1.2f else 16f / 9f,
+        animationSpec = tween(320),
+        label = "stageAspect"
+    )
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -452,7 +479,7 @@ fun PlayerScreen(
         ) {
             Box(
                 Modifier
-                    .then(if (fullscreen) Modifier.fillMaxSize() else Modifier.aspectRatio(16f / 9f))
+                    .then(if (fullscreen) Modifier.fillMaxSize() else Modifier.aspectRatio(stageAspect))
                     .fillMaxWidth()
                     .onSizeChanged { boxSize = it }
             ) {
@@ -466,7 +493,7 @@ fun PlayerScreen(
                             this.player = engine
                         }
                     },
-                    update = { it.keepScreenOn = isPlaying && expanded },
+                    update = { it.keepScreenOn = isPlaying && expanded && !audioMode },
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -625,6 +652,7 @@ fun PlayerScreen(
                                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
                             )
                             if (info != null) {
+                                AudioModeButton(active = false, onClick = { AudioMode.on = true })
                                 OverlayIconButton(
                                     icon = Icons.Rounded.Settings,
                                     description = "Settings",
@@ -663,12 +691,7 @@ fun PlayerScreen(
                                         isPlaying -> CenterAction.Pause
                                         else -> CenterAction.Play
                                     },
-                                    onClick = {
-                                        if (isPlaying) player.pause() else {
-                                            if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
-                                            player.play()
-                                        }
-                                    }
+                                    onClick = togglePlay
                                 )
                             }
                         }
@@ -704,20 +727,43 @@ fun PlayerScreen(
                                 buffered = loadedFraction,
                                 scrubbing = dragging,
                                 enabled = !live && duration > 0,
-                                onScrubStart = {
-                                    dragging = true
-                                    dragValue = it
-                                },
-                                onScrub = { dragValue = it },
-                                onScrubEnd = { value ->
-                                    val target = (value * duration).toLong()
-                                    player.seekTo(target)
-                                    position = target
-                                    dragging = false
-                                }
+                                onScrubStart = scrubStart,
+                                onScrub = scrubMove,
+                                onScrubEnd = scrubEnd
                             )
                         }
                     }
+                }
+
+                // Listen-only: the picture turns into the cassette player.
+                this@Column.AnimatedVisibility(
+                    visible = audioMode,
+                    enter = fadeIn(tween(260)),
+                    exit = fadeOut(tween(200)),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    AudioStage(
+                        title = title,
+                        thumb = poster,
+                        isPlaying = isPlaying,
+                        buffering = buffering || playing.info is Load.Loading,
+                        ended = ended,
+                        live = live,
+                        progress = playedFraction,
+                        buffered = loadedFraction,
+                        positionMs = position,
+                        durationMs = duration,
+                        scrubbing = dragging,
+                        onTogglePlay = togglePlay,
+                        onSeekBy = { seekBy(it) },
+                        onScrubStart = scrubStart,
+                        onScrub = scrubMove,
+                        onScrubEnd = scrubEnd,
+                        onMinimise = { if (fullscreen) toggleFullscreen() else onClose() },
+                        onShowVideo = { AudioMode.on = false },
+                        onSettings = if (info != null) ({ settingsOpen = true }) else null,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
         }
