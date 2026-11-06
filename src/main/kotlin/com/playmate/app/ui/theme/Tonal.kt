@@ -2,9 +2,11 @@ package com.playmate.app.ui.theme
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material3.MaterialTheme
@@ -52,13 +54,16 @@ object Tonal {
 /**
  * A tappable surface that gives way a little under the finger (scale 0.96) and ripples inside
  * its own shape. The order matters: scale, clip, colour, then the click, so the ripple is clipped.
+ * Pass [onLongClick] to answer a long press too (an icon-only button uses it to say its name).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Modifier.tonalPress(
     shape: Shape,
     color: Color,
     enabled: Boolean = true,
     role: Role = Role.Button,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ): Modifier {
     val source = remember { MutableInteractionSource() }
@@ -68,6 +73,24 @@ fun Modifier.tonalPress(
         animationSpec = tween(durationMillis = 100),
         label = "press"
     )
+    val tap = if (onLongClick != null) {
+        Modifier.combinedClickable(
+            interactionSource = source,
+            indication = LocalIndication.current,
+            enabled = enabled,
+            role = role,
+            onLongClick = onLongClick,
+            onClick = onClick
+        )
+    } else {
+        Modifier.clickable(
+            interactionSource = source,
+            indication = LocalIndication.current,
+            enabled = enabled,
+            role = role,
+            onClick = onClick
+        )
+    }
     return this
         .graphicsLayer {
             scaleX = scale
@@ -75,11 +98,5 @@ fun Modifier.tonalPress(
         }
         .clip(shape)
         .background(color)
-        .clickable(
-            interactionSource = source,
-            indication = LocalIndication.current,
-            enabled = enabled,
-            role = role,
-            onClick = onClick
-        )
+        .then(tap)
 }
