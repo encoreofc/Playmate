@@ -58,7 +58,7 @@ fun SubscriptionsScreen(vm: AppViewModel) {
         SignedOutSubscriptions(
             onSignIn = vm::openLogin,
             onNotifications = {
-                Toast.makeText(context, "Notifications are coming soon", Toast.LENGTH_SHORT).show()
+                vm.openNotifications()
             },
             onSearch = { vm.select(Tab.Search); vm.startEditing() }
         )
@@ -74,7 +74,7 @@ fun SubscriptionsScreen(vm: AppViewModel) {
             item {
                 HomeTopBar(
                     onNotifications = {
-                        Toast.makeText(context, "Notifications are coming soon", Toast.LENGTH_SHORT).show()
+                        vm.openNotifications()
                     },
                     onSearch = { vm.select(Tab.Search); vm.startEditing() }
                 )
