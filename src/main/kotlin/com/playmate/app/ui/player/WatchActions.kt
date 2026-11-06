@@ -85,7 +85,10 @@ import com.playmate.app.data.Reaction
 import com.playmate.app.data.SaveState
 import com.playmate.app.data.WatchMeta
 import com.playmate.app.data.activeDownload
+import com.playmate.app.ui.components.AnimatedThumb
+import com.playmate.app.ui.components.RollingCount
 import com.playmate.app.ui.components.SubscribeButton
+import com.playmate.app.ui.components.YtIcons
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.Animatable
@@ -219,6 +222,9 @@ private val PillShape = RoundedCornerShape(50)
 private val PillHeight = 36.dp
 private val PillIcon = 20.dp
 
+/** YouTube draws its thumbs on a 24dp icon; the other chips use a slightly smaller one. */
+private val ThumbIcon = 24.dp
+
 /**
  * The one shape every chip under the video is made from: a 36dp pill, an icon, a label. It is
  * YouTube's grey; switched on (background play) it flips to YouTube's selected look, a white
@@ -269,7 +275,11 @@ private fun ActionChip(
     }
 }
 
-/** Like and dislike in one joined pill, with a small hairline between them. */
+/**
+ * Like and dislike in one joined pill, with a small hairline between them. Liked / disliked is
+ * shown the way YouTube shows it: the thumb is an outline when off and a solid shape when on, and
+ * the like thumb throws a few rays and the count rolls when it is turned on.
+ */
 @Composable
 private fun ReactionPill(
     reaction: Reaction,
@@ -281,8 +291,6 @@ private fun ReactionPill(
     val liked = reaction == Reaction.Liked
     val disliked = reaction == Reaction.Disliked
     val haptic = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
-    val pop = remember { Animatable(1f) }
 
     Row(
         Modifier
@@ -295,34 +303,23 @@ private fun ReactionPill(
             Modifier
                 .fillMaxHeight()
                 .clickable(role = Role.Button, onClickLabel = "Like") {
-                    if (!liked) {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        scope.launch {
-                            pop.snapTo(0.7f)
-                            pop.animateTo(
-                                1f,
-                                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
-                            )
-                        }
-                    }
+                    if (!liked) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onLike()
                 }
                 .padding(start = 14.dp, end = if (likeCount != null) 14.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                if (liked) Icons.Rounded.ThumbUp else Icons.Rounded.ThumbUpOffAlt,
-                contentDescription = "Like",
+            AnimatedThumb(
+                on = liked,
+                outline = YtIcons.ThumbUp,
+                solid = YtIcons.ThumbUpSolid,
+                size = ThumbIcon,
                 tint = plain,
-                modifier = Modifier
-                    .size(PillIcon)
-                    .graphicsLayer {
-                        scaleX = pop.value
-                        scaleY = pop.value
-                    }
+                reach = 7.dp,
+                description = "Like"
             )
             likeCount?.let {
-                Text(
+                RollingCount(
                     it,
                     style = MaterialTheme.typography.labelLarge,
                     color = plain,
@@ -338,11 +335,14 @@ private fun ReactionPill(
                 .padding(horizontal = 14.dp),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
-                contentDescription = "Dislike",
+            AnimatedThumb(
+                on = disliked,
+                outline = YtIcons.ThumbDown,
+                solid = YtIcons.ThumbDownSolid,
+                size = ThumbIcon,
                 tint = plain,
-                modifier = Modifier.size(PillIcon)
+                rays = false,
+                description = "Dislike"
             )
         }
     }
@@ -565,11 +565,20 @@ fun SaveSheet(vm: AppViewModel, onDismiss: () -> Unit) {
 
                 is Load.Failed -> Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
                     Text(
-                        state.message,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        "Couldn't load your playlists",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
                     )
-                    TextButton(onClick = vm::loadPlaylists) { Text("Try again") }
+                    Text(
+                        state.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    TextButton(
+                        onClick = vm::loadPlaylists,
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) { Text("Try again") }
                 }
 
                 is Load.Ready -> Column(
