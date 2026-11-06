@@ -263,42 +263,48 @@ private fun Composer(vm: AppViewModel, onSignIn: () -> Unit) {
                         modifier = Modifier.padding(start = 12.dp).padding(vertical = 12.dp)
                     )
                 }
-                return@Box
+            } else {
+                ComposerField(vm, pill)
             }
+        }
+    }
+}
 
-            var text by remember { mutableStateOf("") }
-            Row(pill.padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Avatar(vm.account?.avatar, 28.dp)
-                BasicTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    maxLines = 4,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = scheme.onSurface),
-                    cursorBrush = SolidColor(scheme.onSurface),
-                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 12.dp),
-                    decorationBox = { inner ->
-                        Box {
-                            if (text.isEmpty()) {
-                                Text(
-                                    "Add a comment…",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = scheme.onSurfaceVariant
-                                )
-                            }
-                            inner()
-                        }
+/** The signed-in box: avatar, the text field and the send button. */
+@Composable
+private fun ComposerField(vm: AppViewModel, pill: Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    var text by remember { mutableStateOf("") }
+    Row(pill.padding(start = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Avatar(vm.account?.avatar, 28.dp)
+        BasicTextField(
+            value = text,
+            onValueChange = { text = it },
+            maxLines = 4,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = scheme.onSurface),
+            cursorBrush = SolidColor(scheme.onSurface),
+            modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 12.dp),
+            decorationBox = { inner ->
+                Box {
+                    if (text.isEmpty()) {
+                        Text(
+                            "Add a comment…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = scheme.onSurfaceVariant
+                        )
                     }
-                )
-                if (vm.postingComment) {
-                    CircularProgressIndicator(Modifier.padding(10.dp).size(20.dp), strokeWidth = 2.dp)
-                } else {
-                    IconButton(
-                        onClick = { vm.postComment(text) { text = "" } },
-                        enabled = text.isNotBlank()
-                    ) {
-                        Icon(Icons.Rounded.Send, contentDescription = "Post")
-                    }
+                    inner()
                 }
+            }
+        )
+        if (vm.postingComment) {
+            CircularProgressIndicator(Modifier.padding(10.dp).size(20.dp), strokeWidth = 2.dp)
+        } else {
+            IconButton(
+                onClick = { vm.postComment(text) { text = "" } },
+                enabled = text.isNotBlank()
+            ) {
+                Icon(Icons.Rounded.Send, contentDescription = "Post")
             }
         }
     }
