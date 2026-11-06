@@ -22,7 +22,10 @@ import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.Playing
 import com.playmate.app.data.PlaylistOption
 import com.playmate.app.data.Reaction
+import com.playmate.app.data.NotificationItem
+import com.playmate.app.data.NotificationRepo
 import com.playmate.app.data.RecentSearches
+import com.playmate.app.data.SearchSync
 import com.playmate.app.data.SeenStore
 import com.playmate.app.data.SearchPage
 import com.playmate.app.data.Session
@@ -75,7 +78,11 @@ class ShortsLaunch(val items: List<VideoItem>, val start: Int)
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val recentStore = RecentSearches(app)
+    // Signed-out searches and a signed-in account's searches are kept apart, so they never mix.
+    private val guestSearches = RecentSearches(app)
+    private val accountSearches = RecentSearches(app, account = true)
+    private val recentStore: RecentSearches get() = if (signedIn) accountSearches else guestSearches
+    private var searchesSyncedAt = 0L
     private val seen = SeenStore(app)
 
     var tab by mutableStateOf(Tab.Home); private set
@@ -92,7 +99,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var suggestions by mutableStateOf<List<String>>(emptyList()); private set
     var results by mutableStateOf<Load<SearchPage>?>(null); private set
     var loadingMore by mutableStateOf(false); private set
-    var recents by mutableStateOf(recentStore.all()); private set
+    var recents by mutableStateOf(guestSearches.all()); private set
+
+    var showNotifications by mutableStateOf(false); private set
+    var notifications by mutableStateOf<Load<List<NotificationItem>>>(Load.Loading); private set
+    var loadingMoreNotifications by mutableStateOf(false); private set
+    private var notificationToken: String? = null
+    private var notificationJob: Job? = null
 
     var signedIn by mutableStateOf(false); private set
     var account by mutableStateOf<Account?>(null); private set
@@ -164,6 +177,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         Session.init(app)
         signedIn = Session.loggedIn
         if (signedIn) loadAccount()
+        recents = recentStore.all()
+        if (signedIn) syncSearches(force = true)
         loadFeed()
         // Posted, so every property of this class is initialised before the playback is picked up.
         viewModelScope.launch(Dispatchers.Main) { restoreRunningPlayback() }
@@ -196,6 +211,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun select(target: Tab) {
         tab = target
+        showNotifications = false
         closeChannel()
     }
 
@@ -360,6 +376,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         signedIn = Session.loggedIn
         if (!signedIn) return
         loadAccount()
+        recents = accountSearches.all()
+        syncSearches(force = true)
+        notifications = Load.Loading
         history = Load.Loading
         feed = Load.Loading
         loadFeed()
@@ -371,6 +390,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         Session.clear()
         signedIn = false
         account = null
+        accountSearches.wipe()
+        recents = guestSearches.all()
+        showNotifications = false
+        notificationJob?.cancel()
+        notifications = Load.Loading
+        notificationToken = null
         subscriptions.clear()
         shortMetas.clear()
         meta = meta?.copy(reaction = Reaction.None, subscribed = null)
@@ -490,14 +515,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         suggestJob = viewModelScope.launch {
             delay(200)
-            suggestions = attempt { YouTubeRepo.suggestions(value.trim()) }
-                .getOrDefault(emptyList())
+            val typed = value.trim()
+            // Signed in: YouTube's own suggestions for this account (its past searches first); otherwise the public ones.
+            val own = if (signedIn) attempt { SearchSync.suggestions(typed) }.getOrNull().orEmpty() else emptyList()
+            suggestions = own.ifEmpty { attempt { YouTubeRepo.suggestions(typed) }.getOrDefault(emptyList()) }
                 .take(8)
         }
     }
 
     fun startEditing() {
         editing = true
+        syncSearches()
+    }
+
+    /** A fresh search: empty box, no old results behind it, the saved searches showing. */
+    fun beginSearch() {
+        query = ""
+        lastSubmitted = ""
+        results = null
+        suggestions = emptyList()
+        suggestJob?.cancel()
+        editing = true
+        syncSearches()
+    }
+
+    /** Signed in: brings the account's own YouTube search history into the list (at most once a minute). */
+    private fun syncSearches(force: Boolean = false) {
+        if (!Session.loggedIn) return
+        val now = System.currentTimeMillis()
+        if (!force && now - searchesSyncedAt < 60_000) return
+        searchesSyncedAt = now
+        viewModelScope.launch {
+            attempt { SearchSync.suggestions("") }.onSuccess { remote ->
+                if (remote.isEmpty() || !signedIn) return@onSuccess
+                accountSearches.merge(remote)
+                recents = accountSearches.all()
+            }
+        }
     }
 
     /** Leaves the typing view and goes back to the results that were showing, with the words that made them. */
@@ -522,6 +576,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tab = Tab.Search
         recentStore.add(q)
         recents = recentStore.all()
+        // Signed in: YouTube gets the search too, so it joins the account's own history.
+        if (signedIn) viewModelScope.launch { attempt { SearchSync.record(q) } }
 
         suggestJob?.cancel()
         searchJob?.cancel()
@@ -561,6 +617,52 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun clearRecents() {
         recentStore.clear()
         recents = emptyList()
+    }
+
+    // ---------------------------------------------------------------- notifications
+
+    fun openNotifications() {
+        showNotifications = true
+        loadNotifications()
+    }
+
+    fun closeNotifications() {
+        showNotifications = false
+    }
+
+    /** Loads the account's notifications. The list on screen stays while a new one loads. */
+    fun loadNotifications(force: Boolean = false) {
+        if (!Session.loggedIn) return
+        notificationJob?.cancel()
+        if (force || notifications !is Load.Ready) notifications = Load.Loading
+        notificationJob = viewModelScope.launch {
+            attempt { NotificationRepo.first() }
+                .onSuccess {
+                    notifications = Load.Ready(it.items)
+                    notificationToken = it.token
+                }
+                .onFailure {
+                    if (notifications !is Load.Ready) notifications = Load.Failed(friendly(it))
+                }
+        }
+    }
+
+    fun loadMoreNotifications() {
+        val token = notificationToken ?: return
+        val current = (notifications as? Load.Ready)?.data ?: return
+        if (loadingMoreNotifications) return
+        loadingMoreNotifications = true
+        viewModelScope.launch {
+            attempt { NotificationRepo.more(token) }
+                .onSuccess { page ->
+                    val latest = (notifications as? Load.Ready)?.data ?: current
+                    val known = latest.map { it.id }.toHashSet()
+                    notifications = Load.Ready(latest + page.items.filter { it.id !in known })
+                    notificationToken = page.token?.takeIf { it != token }
+                }
+                .onFailure { notificationToken = null }
+            loadingMoreNotifications = false
+        }
     }
 
     // ---------------------------------------------------------------- player
