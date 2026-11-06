@@ -60,6 +60,7 @@ import com.playmate.app.Tab
 import com.playmate.app.data.Load
 import com.playmate.app.data.VideoItem
 import com.playmate.app.ui.components.ErrorState
+import com.playmate.app.ui.components.SignInPill
 import com.playmate.app.ui.components.ThemeDialog
 import com.playmate.app.ui.components.formatClock
 import com.playmate.app.ui.theme.glass
@@ -100,51 +101,66 @@ fun YouScreen(vm: AppViewModel) {
         return
     }
 
-    PullToRefreshBox(
-        isRefreshing = vm.historyRefreshing,
-        onRefresh = { vm.loadHistory(force = true) },
-        modifier = Modifier.fillMaxSize()
-    ) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-            item {
-                YouTopBar(
-                    signedIn = vm.signedIn,
-                    onAccount = { if (vm.signedIn) confirmSignOut = true else vm.openLogin() },
-                    onNotifications = {
-                        Toast.makeText(context, "Notifications are coming soon", Toast.LENGTH_SHORT).show()
-                    },
-                    onSearch = { vm.select(Tab.Search); vm.startEditing() },
-                    onSettings = { showTheme = true }
-                )
-            }
-            item { ProfileHeader(vm) }
-
-            if (!vm.signedIn) {
-                item { SignInCard(onClick = vm::openLogin) }
-            } else {
-                item { SectionHeader("History", onClick = { showHistory = true }) }
-                val trackingLine = vm.trackingNote?.let { "Last watch report didn't go through: $it" }
-                    ?: vm.trackingInfo
-                trackingLine?.let { line ->
-                    item {
-                        Text(
-                            line,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
-                        )
-                    }
+    Box(Modifier.fillMaxSize()) {
+        PullToRefreshBox(
+            isRefreshing = vm.historyRefreshing,
+            onRefresh = { vm.loadHistory(force = true) },
+            modifier = Modifier.fillMaxSize()
+        ) {
+            // Signed out, the sign-in bar floats over the bottom, so the list leaves room under it.
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = if (vm.signedIn) 24.dp else 80.dp)
+            ) {
+                item {
+                    YouTopBar(
+                        signedIn = vm.signedIn,
+                        onAccount = { if (vm.signedIn) confirmSignOut = true else vm.openLogin() },
+                        onNotifications = {
+                            Toast.makeText(context, "Notifications are coming soon", Toast.LENGTH_SHORT).show()
+                        },
+                        onSearch = { vm.select(Tab.Search); vm.startEditing() },
+                        onSettings = { showTheme = true }
+                    )
                 }
-                item { HistoryStrip(vm) }
-            }
+                item { ProfileHeader(vm) }
 
-            item { SectionHeader("Library", onClick = null) }
-            item {
-                LibraryRow(
-                    label = "Downloads",
-                    onClick = { vm.select(Tab.Downloads) }
-                )
+                if (vm.signedIn) {
+                    item { SectionHeader("History", onClick = { showHistory = true }) }
+                    val trackingLine = vm.trackingNote?.let { "Last watch report didn't go through: $it" }
+                        ?: vm.trackingInfo
+                    trackingLine?.let { line ->
+                        item {
+                            Text(
+                                line,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+                            )
+                        }
+                    }
+                    item { HistoryStrip(vm) }
+                }
+
+                item { SectionHeader("Library", onClick = null) }
+                item {
+                    LibraryRow(
+                        label = "Downloads",
+                        onClick = { vm.select(Tab.Downloads) }
+                    )
+                }
             }
+        }
+
+        // Nobody signed in: YouTube's sign-in bar at the bottom of the page, 8dp above the bottom bar.
+        if (!vm.signedIn) {
+            SignInPill(
+                text = "Sign in to manage your library\nvideos.",
+                onClick = vm::openLogin,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
+            )
         }
     }
 }
@@ -369,31 +385,5 @@ private fun LibraryRow(label: String, onClick: () -> Unit) {
     ) {
         Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(26.dp))
         Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(start = 20.dp))
-    }
-}
-
-@Composable
-private fun SignInCard(onClick: () -> Unit) {
-    val shape = RoundedCornerShape(20.dp)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(16.dp)
-            .glass(shape)
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text("Sign in to YouTube", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Your recommendations, watch history and subscriptions, exactly as on your YouTube account.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            "You sign in on Google's own page. Playmate never sees your password.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Button(onClick = onClick) { Text("Sign in") }
     }
 }
