@@ -11,7 +11,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -738,14 +737,14 @@ fun PlayerScreen(
                     onShare = shareVideo,
                     onSave = saveVideo
                 )
-                AnimatedVisibility(
+                androidx.compose.animation.AnimatedVisibility(
                     visible = commentsOpen,
                     enter = slideInVertically { it },
                     exit = slideOutVertically { it }
                 ) {
                     CommentsPanel(vm = vm, onDismiss = { commentsOpen = false })
                 }
-                AnimatedVisibility(
+                androidx.compose.animation.AnimatedVisibility(
                     visible = descriptionOpen,
                     enter = slideInVertically { it },
                     exit = slideOutVertically { it }
