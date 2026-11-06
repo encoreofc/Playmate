@@ -9,6 +9,9 @@ import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -411,7 +414,14 @@ fun PlayerScreen(
     val title = info?.title ?: playing.seed.title
 
     var commentsOpen by remember(playing.seed.url) { mutableStateOf(false) }
+    var descriptionOpen by remember(playing.seed.url) { mutableStateOf(false) }
     var saveOpen by remember(playing.seed.url) { mutableStateOf(false) }
+
+    // Back closes the comments / description panel first, then the player (registered later = checked first).
+    BackHandler(enabled = expanded && (commentsOpen || descriptionOpen)) {
+        commentsOpen = false
+        descriptionOpen = false
+    }
 
     val shareVideo: () -> Unit = {
         val id = videoIdOf(playing.seed.url)
@@ -714,16 +724,41 @@ fun PlayerScreen(
         }
 
         if (!fullscreen) {
-            Details(
-                playing = playing,
-                info = info,
-                vm = vm,
-                onOpen = onOpen,
-                onRetry = onRetry,
-                onComments = { commentsOpen = true },
-                onShare = shareVideo,
-                onSave = saveVideo
-            )
+            // The comments and the description open in this same area, right under the player,
+            // so the video stays visible above them, exactly like YouTube.
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                Details(
+                    playing = playing,
+                    info = info,
+                    vm = vm,
+                    onOpen = onOpen,
+                    onRetry = onRetry,
+                    onComments = { commentsOpen = true },
+                    onDescription = { descriptionOpen = true },
+                    onShare = shareVideo,
+                    onSave = saveVideo
+                )
+                AnimatedVisibility(
+                    visible = commentsOpen,
+                    enter = slideInVertically { it },
+                    exit = slideOutVertically { it }
+                ) {
+                    CommentsPanel(vm = vm, onDismiss = { commentsOpen = false })
+                }
+                AnimatedVisibility(
+                    visible = descriptionOpen,
+                    enter = slideInVertically { it },
+                    exit = slideOutVertically { it }
+                ) {
+                    DescriptionPanel(
+                        vm = vm,
+                        info = info,
+                        title = title,
+                        seedChannel = playing.seed.channel,
+                        onDismiss = { descriptionOpen = false }
+                    )
+                }
+            }
         }
     }
 
@@ -810,7 +845,6 @@ fun PlayerScreen(
         }
     }
 
-    if (commentsOpen) CommentsSheet(vm = vm, onDismiss = { commentsOpen = false })
     if (saveOpen) SaveSheet(vm = vm, onDismiss = { saveOpen = false })
 }
 
@@ -832,10 +866,10 @@ private fun Details(
     onOpen: (VideoItem) -> Unit,
     onRetry: () -> Unit,
     onComments: () -> Unit,
+    onDescription: () -> Unit,
     onShare: () -> Unit,
     onSave: () -> Unit
 ) {
-    var expanded by remember(playing.seed.url) { mutableStateOf(false) }
 
     // A download kept inside the app: its own page, nothing here needs internet.
     val offline = info
@@ -858,10 +892,7 @@ private fun Details(
                             channel = playing.seed.channel,
                             views = playing.seed.views,
                             uploaded = playing.seed.uploaded,
-                            likes = null,
-                            description = "",
-                            expanded = false,
-                            onToggle = {}
+                            onOpen = null
                         )
                     }
                 } else {
@@ -879,14 +910,12 @@ private fun Details(
                         channel = "",
                         views = data.views,
                         uploaded = data.uploaded,
-                        likes = vm.meta?.likeCount,
-                        description = data.description,
-                        expanded = expanded,
-                        onToggle = { expanded = !expanded }
+                        onOpen = onDescription,
+                        description = data.description
                     )
                 }
                 item { ChannelRow(vm, data, vm.meta, data.channel) }
-                item { ActionRow(vm, vm.meta, onComments = onComments, onShare = onShare, onSave = onSave) }
+                item { ActionRow(vm, vm.meta, onShare = onShare, onSave = onSave) }
 
                 item {
                     CommentsCard(
