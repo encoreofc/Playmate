@@ -3,7 +3,6 @@ package com.playmate.app.ui.player
 import android.os.StatFs
 import android.widget.Toast
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,7 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -20,8 +18,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.DownloadDone
-import androidx.compose.material.icons.rounded.ExpandLess
-import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,10 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.playmate.app.data.AudioFormat
 import com.playmate.app.data.Ffmpeg
 import com.playmate.app.data.OfflineStore
 import com.playmate.app.data.PlayableInfo
@@ -54,7 +49,6 @@ import com.playmate.app.data.SaveState
 import com.playmate.app.data.SaveTarget
 import com.playmate.app.data.activeDownload
 import com.playmate.app.data.estimatedBytes
-import com.playmate.app.data.findTarget
 import com.playmate.app.data.formatSize
 import com.playmate.app.data.probeSize
 import com.playmate.app.data.safeFileName
@@ -65,18 +59,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-/** Options that are rarely what a person wants to keep inside the app: extra codecs, and the very big audio files. */
-private fun isHeavy(target: SaveTarget): Boolean =
-    !target.primary || target.audioFormat == AudioFormat.FLAC || target.audioFormat == AudioFormat.WAV
-
-/** The heading an audio option sits under. */
-private fun dlAudioGroup(target: SaveTarget): String = when (target.audioFormat) {
-    AudioFormat.MP3 -> "Audio  ·  MP3"
-    AudioFormat.M4A, AudioFormat.OPUS -> "Audio  ·  original sound"
-    else -> "Audio  ·  lossless"
-}
-
-/** "Download": pick a format and quality, and the file is kept inside the app (Downloads tab), playable offline. */
+/**
+ * "Download": pick a format and quality, and the file is kept inside the app (Downloads tab),
+ * playable offline. Built from the same pieces as "Save to phone" (see DownloadUi.kt).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
@@ -86,32 +72,30 @@ fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
     val ffmpegReady = Ffmpeg.available
     val targets = remember(info, ffmpegReady) { saveTargetsFor(info) }
     val sizes = remember(info) { mutableStateMapOf<String, Long>() }
+    var audioTab by remember { mutableStateOf(targets.video.isEmpty() && targets.audio.isNotEmpty()) }
     var picked by remember { mutableStateOf<SaveTarget?>(null) }
     var more by remember { mutableStateOf(false) }
 
-    // Sizes are measured a few at a time, the ones on screen first.
+    // Sizes are measured a few at a time, the ones people usually want first.
     LaunchedEffect(info.url, ffmpegReady) {
         val gate = Semaphore(6)
         val everything = targets.video + targets.audio
-        val urls = (everything.filter { !isHeavy(it) } + everything.filter { isHeavy(it) })
+        val urls = (everything.filter { !it.isExtra() } + everything.filter { it.isExtra() })
             .flatMap { it.urls }
             .distinct()
             .filter { it !in sizes }
         urls.forEach { url -> launch { gate.withPermit { sizes[url] = probeSize(url) } } }
     }
 
-    val everything = targets.video + targets.audio
-    val videoList = if (more) targets.video else targets.video.filter { !isHeavy(it) }
-    val audioList = if (more) targets.audio else targets.audio.filter { !heavyAudio(it) }
-    val extra = everything.count { isHeavy(it) }
+    val list = if (audioTab) targets.audio else targets.video
+    val recommended = remember(targets, audioTab) { recommendedFor(targets, audioTab) }
+    val shown = picked?.takeIf { it in list } ?: recommended ?: list.firstOrNull()
+    // The extras stay folded, unless one of them is what is chosen.
+    val visible = list.filter { more || !it.isExtra() || it === shown }
+    val extra = list.count { it.isExtra() }
 
-    // Inside the app the first choice is the best video up to 720p, which keeps files modest; one tap picks more.
-    val fallback = remember(targets) {
-        findTarget(targets, "v|720|0|*")?.takeIf { !it.isAudio } ?: targets.audio.firstOrNull()
-    }
-    val shown = picked?.takeIf { it in everything } ?: fallback
-
-    val durationSec = (PlayerHolder.peek()?.duration?.takeIf { it > 0 } ?: 0L) / 1000
+    val durationMs = PlayerHolder.peek()?.duration?.takeIf { it > 0 }
+    val durationSec = (durationMs ?: 0L) / 1000
 
     /** "…" while measuring, "—" when unknown, "~" in front of a calculated size. */
     fun sizeOf(target: SaveTarget): String {
@@ -134,59 +118,67 @@ fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
         shape = PmSheetShape,
         dragHandle = { PmDragHandle() }
     ) {
-        Column(Modifier.navigationBarsPadding()) {
+        Column(Modifier.navigationBarsPadding().pmSheetMaxHeight()) {
             Column(
                 Modifier
                     .weight(1f, fill = false)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp)
             ) {
-                PmSheetHeader("Download", info.title)
+                DlHeader(
+                    label = "Download",
+                    title = info.title,
+                    thumb = info.thumb,
+                    durationMs = durationMs
+                )
+
+                if (!info.live && targets.video.isNotEmpty() && targets.audio.isNotEmpty()) {
+                    PmSegmented(
+                        labels = listOf("Video", "Audio"),
+                        icons = listOf(Icons.Rounded.Videocam, Icons.Rounded.MusicNote),
+                        selectedIndex = if (audioTab) 1 else 0,
+                        onSelect = { index ->
+                            audioTab = index == 1
+                            picked = null
+                        },
+                        modifier = Modifier.padding(top = 20.dp, bottom = 6.dp)
+                    )
+                }
 
                 when {
                     info.live -> PmNote("Live streams can't be downloaded.")
                     nothing -> PmNote("No downloadable files were found for this video.")
+                    list.isEmpty() -> PmNote("No ${if (audioTab) "audio" else "video"} files were found for this video.")
                     else -> {
-                        if (videoList.isNotEmpty()) {
-                            PmSectionLabel("Video")
-                            videoList.forEach { target ->
-                                DlOption(target, sizeOf(target), target === shown) { picked = target }
+                        if (audioTab) {
+                            visible.groupBy { audioGroupTitle(it) }.forEach { (title, items) ->
+                                PmSectionLabel(title)
+                                items.forEach { target ->
+                                    DlRow(
+                                        label = target.label,
+                                        note = target.rowNote(),
+                                        recommended = target === recommended,
+                                        size = sizeOf(target),
+                                        selected = target === shown,
+                                        onClick = { picked = target }
+                                    )
+                                }
                             }
-                        }
-                        audioList.groupBy { dlAudioGroup(it) }.forEach { (title, items) ->
-                            PmSectionLabel(title)
-                            items.forEach { target ->
-                                DlOption(target, sizeOf(target), target === shown) { picked = target }
-                            }
-                        }
-                        if (extra > 0) {
-                            Row(
-                                Modifier
-                                    .padding(top = 16.dp)
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(PmRadius))
-                                    .clickable {
-                                        more = !more
-                                        // Folding the extras away must not leave one of them quietly selected.
-                                        if (!more) picked = picked?.takeIf { !isHeavy(it) }
-                                    }
-                                    .padding(vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    if (more) "Fewer formats" else "More formats  ·  $extra",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Icon(
-                                    if (more) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(22.dp)
+                        } else {
+                            Spacer(Modifier.height(8.dp))
+                            visible.forEach { target ->
+                                DlRow(
+                                    label = target.label,
+                                    note = target.rowNote(),
+                                    recommended = target === recommended,
+                                    size = sizeOf(target),
+                                    selected = target === shown,
+                                    onClick = { picked = target }
                                 )
                             }
                         }
-                        if (!ffmpegReady) {
+                        if (extra > 0) DlMore(open = more, count = extra) { more = !more }
+                        if (audioTab && !ffmpegReady) {
                             PmNote("MP3, FLAC and WAV aren't available on this phone right now.")
                         }
                     }
@@ -195,27 +187,21 @@ fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
             }
 
             PmHairline()
-            Column(Modifier.padding(horizontal = 20.dp).padding(top = 12.dp, bottom = 16.dp)) {
-                if (tight) {
-                    Text(
-                        "This may not fit: it needs about ${formatSize((needed ?: 0L) * 2)} of free space while it downloads.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(bottom = 10.dp)
-                    )
-                } else if (free > 0) {
-                    Text(
-                        "Kept inside Playmate  ·  ${formatSize(free)} free on your phone",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 10.dp)
-                    )
-                }
-
+            Column(Modifier.padding(horizontal = 20.dp).padding(top = 14.dp, bottom = 16.dp)) {
+                DlWhere(
+                    title = "Saved inside Playmate",
+                    note = when {
+                        tight -> "May not fit: needs about ${formatSize((needed ?: 0L) * 2)} free while it downloads."
+                        free > 0 -> "${formatSize(free)} free"
+                        else -> null
+                    },
+                    warning = tight
+                )
                 PmPrimaryButton(
                     text = if (shown != null) "Download ${shown.label}  ·  ${sizeOf(shown)}" else "Download",
                     icon = Icons.Rounded.Download,
                     enabled = shown != null && !info.live,
+                    modifier = Modifier.padding(top = 14.dp),
                     onClick = {
                         val choice = shown
                         if (choice != null) {
@@ -229,10 +215,6 @@ fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
         }
     }
 }
-
-/** Audio rows that stay folded away by default: only the very big files. (Video extras are the other codecs.) */
-private fun heavyAudio(target: SaveTarget): Boolean =
-    target.audioFormat == AudioFormat.FLAC || target.audioFormat == AudioFormat.WAV
 
 /**
  * Shown when the video already has a download (or one is running): progress, what is saved,
@@ -367,40 +349,5 @@ fun DownloadStateSheet(
                 modifier = Modifier.padding(top = 10.dp)
             )
         }
-    }
-}
-
-@Composable
-private fun DlOption(target: SaveTarget, size: String, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .padding(top = 8.dp)
-            .fillMaxWidth()
-            .pmChoice(selected, onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                target.label,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold
-            )
-            Text(
-                target.detail.ifBlank { target.format },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp)
-            )
-        }
-        Text(
-            size,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 12.dp, end = 14.dp)
-        )
-        PmCheck(selected)
     }
 }
