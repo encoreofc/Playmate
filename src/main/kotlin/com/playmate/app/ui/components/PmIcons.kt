@@ -95,4 +95,80 @@ object PmIcons {
             "M10.2 15.2v2.6M12 12.8v7M13.8 14.4v3.4"
         )
     }
+
+    /** Arrow turning forward: share. */
+    val Share: ImageVector by lazy {
+        line("PmShare", "M14.3 4.8l6.2 6.1-6.2 6.1", "M20 10.9h-8.6a6.9 6.9 0 0 0-6.9 6.9v1.4")
+    }
+
+    /** Arrow down onto a line: download into the app. */
+    val Download: ImageVector by lazy {
+        line("PmDownload", "M12 4.2v10.6", "M7.4 10.4l4.6 4.6 4.6-4.6", "M5 19.6h14")
+    }
+
+    /** Tick on the same line: already downloaded. */
+    val DownloadDone: ImageVector by lazy {
+        line("PmDownloadDone", "M7.2 11.6l3.4 3.4 6.2-6.4", "M5 19.6h14")
+    }
+
+    /** Headphones: background play. The same cups as [AudioMode], without the wave. */
+    val Headphones: ImageVector by lazy {
+        line(
+            "PmHeadphones",
+            "M4 14.5V12a8 8 0 0 1 16 0v2.5",
+            "M4 14.5h2.4a1.1 1.1 0 0 1 1.1 1.1v3.3a1.1 1.1 0 0 1-1.1 1.1h-.8A1.6 1.6 0 0 1 4 18.4z",
+            "M20 14.5h-2.4a1.1 1.1 0 0 0-1.1 1.1v3.3a1.1 1.1 0 0 0 1.1 1.1h.8a1.6 1.6 0 0 0 1.6-1.6z"
+        )
+    }
+
+    /** Bookmark: save to a playlist. */
+    val Bookmark: ImageVector by lazy {
+        line("PmBookmark", "M7.2 3.8h9.6a1.4 1.4 0 0 1 1.4 1.4v14.6l-6.2-4.3-6.2 4.3V5.2a1.4 1.4 0 0 1 1.4-1.4z")
+    }
+
+    /** A phone with an arrow going into it: save as a file on the phone. */
+    val PhoneSave: ImageVector by lazy {
+        line(
+            "PmPhoneSave",
+            "M8.2 2.8h7.6a1.8 1.8 0 0 1 1.8 1.8v14.8a1.8 1.8 0 0 1-1.8 1.8H8.2a1.8 1.8 0 0 1-1.8-1.8V4.6a1.8 1.8 0 0 1 1.8-1.8z",
+            "M12 7.6v6.2",
+            "M9.4 11.4l2.6 2.6 2.6-2.6"
+        )
+    }
+
+    private const val THUMB_CUFF = "M3.7 10.6h3.5v9.8H3.7z"
+    private const val THUMB_HAND =
+        "M7.2 10.6l3.8-5.7a1.5 1.5 0 0 1 2.7 1l-.6 4h5a2 2 0 0 1 2 2.4l-1.3 6.5a2 2 0 0 1-2 1.6H7.2"
+
+    /**
+     * The thumbs, drawn in the same line as everything else: an outline when off and the same
+     * shape filled when on. The dislike thumbs are these turned half a circle.
+     */
+    private fun thumb(name: String, solid: Boolean, down: Boolean): ImageVector {
+        val builder = ImageVector.Builder(
+            name = name,
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        )
+        if (down) builder.addGroup(rotate = 180f, pivotX = 12f, pivotY = 12f)
+        listOf(THUMB_CUFF, if (solid) "${THUMB_HAND}z" else THUMB_HAND).forEach { d ->
+            builder.addPath(
+                pathData = PathParser().parsePathString(d).toNodes(),
+                fill = if (solid) SolidColor(Color.Black) else null,
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 1.8f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            )
+        }
+        if (down) builder.clearGroup()
+        return builder.build()
+    }
+
+    val ThumbUp: ImageVector by lazy { thumb("PmThumbUp", solid = false, down = false) }
+    val ThumbUpSolid: ImageVector by lazy { thumb("PmThumbUpSolid", solid = true, down = false) }
+    val ThumbDown: ImageVector by lazy { thumb("PmThumbDown", solid = false, down = true) }
+    val ThumbDownSolid: ImageVector by lazy { thumb("PmThumbDownSolid", solid = true, down = true) }
 }
