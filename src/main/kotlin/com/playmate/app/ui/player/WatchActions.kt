@@ -2,43 +2,26 @@ package com.playmate.app.ui.player
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import android.widget.Toast
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.BookmarkBorder
-import androidx.compose.material.icons.rounded.NotificationsNone
-import androidx.compose.material.icons.rounded.ThumbDownOffAlt
-import androidx.compose.material.icons.rounded.ThumbUpOffAlt
 import androidx.compose.material.icons.rounded.UnfoldMore
-import androidx.compose.material.icons.rounded.ChatBubbleOutline
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.DownloadDone
-import androidx.compose.material.icons.rounded.Headphones
-import androidx.compose.material.icons.rounded.SaveAlt
-import androidx.compose.material.icons.rounded.Share
-import androidx.compose.material.icons.rounded.ThumbDown
-import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,21 +34,19 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.text.style.TextAlign
 import com.playmate.app.data.CommentItem
 import com.playmate.app.ui.components.agoText
 import com.playmate.app.ui.components.formatCount
@@ -88,18 +69,15 @@ import com.playmate.app.data.activeDownload
 import com.playmate.app.ui.components.AnimatedThumb
 import com.playmate.app.ui.components.RollingCount
 import com.playmate.app.ui.components.SubscribeButton
-import com.playmate.app.ui.components.YtIcons
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.semantics.Role
-import com.playmate.app.ui.theme.LocalPmDark
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import com.playmate.app.ui.components.PmIcons
 import com.playmate.app.ui.theme.Tonal
 import com.playmate.app.ui.theme.tonalPress
 
@@ -218,139 +196,127 @@ fun ChannelRow(vm: AppViewModel, info: PlayableInfo?, meta: WatchMeta?, seedChan
     }
 }
 
-private val PillShape = RoundedCornerShape(50)
-private val PillHeight = 36.dp
-private val PillIcon = 20.dp
-
-/** YouTube draws its thumbs on a 24dp icon; the other chips use a slightly smaller one. */
-private val ThumbIcon = 24.dp
+private val BarShape = RoundedCornerShape(18.dp)
+private val SlotShape = RoundedCornerShape(14.dp)
+private val BarHeight = 52.dp
+private val GlyphSize = 24.dp
 
 /**
- * The one shape every chip under the video is made from: a 36dp pill, an icon, a label. It is
- * YouTube's grey; switched on (background play) it flips to YouTube's selected look, a white
- * pill with dark text on the dark theme and the reverse on the light one. No accent colour.
+ * One place in the action bar. It has no label, so it carries its name another way: TalkBack reads
+ * [label], and a long press shows it as a toast, the way Android's own toolbars name their icons.
+ * [lit] is the switched-on look (the text colour as the fill, the page colour as the glyph);
+ * [state] is what a screen reader says about a toggle.
  */
 @Composable
-private fun PillBase(
-    active: Boolean,
-    label: String?,
+private fun RowScope.BarSlot(
+    label: String,
+    weight: Float = 1f,
+    lit: Boolean = false,
+    state: String? = null,
     onClick: () -> Unit,
-    leading: @Composable () -> Unit
+    content: @Composable () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
-    val container = if (active) scheme.onSurface else Tonal.fill()
-    val content = if (active) scheme.surface else scheme.onSurface
-    CompositionLocalProvider(LocalContentColor provides content) {
-        Row(
-            Modifier
-                .height(PillHeight)
-                .tonalPress(PillShape, container, onClick = onClick)
-                .padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            leading()
-            if (label != null) {
-                Text(
-                    label,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = content,
-                    maxLines = 1,
-                    modifier = Modifier.padding(start = 8.dp)
-                )
-            }
-        }
+    val container by animateColorAsState(
+        targetValue = if (lit) scheme.onSurface else scheme.onSurface.copy(alpha = 0f),
+        animationSpec = tween(180),
+        label = "slotContainer"
+    )
+    val tint = if (lit) scheme.surface else scheme.onSurface
+    val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+
+    Box(
+        Modifier
+            .weight(weight)
+            .fillMaxHeight()
+            .padding(horizontal = 1.dp, vertical = 4.dp)
+            .tonalPress(
+                shape = SlotShape,
+                color = container,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    Toast.makeText(context, label, Toast.LENGTH_SHORT).show()
+                },
+                onClick = onClick
+            )
+            .semantics {
+                contentDescription = label
+                if (state != null) stateDescription = state
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        CompositionLocalProvider(LocalContentColor provides tint) { content() }
     }
 }
 
 @Composable
-private fun ActionChip(
-    icon: ImageVector,
-    label: String,
-    active: Boolean = false,
-    description: String? = null,
-    onClick: () -> Unit
-) {
-    PillBase(active = active, label = label, onClick = onClick) {
-        Icon(icon, contentDescription = description, modifier = Modifier.size(PillIcon))
-    }
+private fun SlotGlyph(icon: ImageVector) {
+    Icon(icon, contentDescription = null, modifier = Modifier.size(GlyphSize))
 }
 
 /**
- * Like and dislike in one joined pill, with a small hairline between them. Liked / disliked is
- * shown the way YouTube shows it: the thumb is an outline when off and a solid shape when on, and
- * the like thumb throws a few rays and the count rolls when it is turned on.
+ * Like and dislike side by side with a small hairline between them. Liked / disliked shows the
+ * YouTube way: the thumb is an outline when off and a solid shape when on, and the like thumb
+ * throws a few rays and the count rolls when it is turned on.
  */
 @Composable
-private fun ReactionPill(
+private fun RowScope.ReactionSlots(
     reaction: Reaction,
     likeCount: String?,
     onLike: () -> Unit,
     onDislike: () -> Unit
 ) {
-    val plain = MaterialTheme.colorScheme.onSurface
     val liked = reaction == Reaction.Liked
     val disliked = reaction == Reaction.Disliked
     val haptic = LocalHapticFeedback.current
 
-    Row(
-        Modifier
-            .height(PillHeight)
-            .clip(PillShape)
-            .background(Tonal.fill()),
-        verticalAlignment = Alignment.CenterVertically
+    BarSlot(
+        label = "Like",
+        weight = 1.9f,
+        state = if (liked) "Liked" else null,
+        onClick = {
+            if (!liked) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            onLike()
+        }
     ) {
-        Row(
-            Modifier
-                .fillMaxHeight()
-                .clickable(role = Role.Button, onClickLabel = "Like") {
-                    if (!liked) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onLike()
-                }
-                .padding(start = 14.dp, end = if (likeCount != null) 14.dp else 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             AnimatedThumb(
                 on = liked,
-                outline = YtIcons.ThumbUp,
-                solid = YtIcons.ThumbUpSolid,
-                size = ThumbIcon,
-                tint = plain,
-                reach = 7.dp,
-                description = "Like"
+                outline = PmIcons.ThumbUp,
+                solid = PmIcons.ThumbUpSolid,
+                size = GlyphSize,
+                reach = 7.dp
             )
             likeCount?.let {
                 RollingCount(
                     it,
                     style = MaterialTheme.typography.labelLarge,
-                    color = plain,
-                    modifier = Modifier.padding(start = 8.dp)
+                    color = LocalContentColor.current,
+                    modifier = Modifier.padding(start = 6.dp)
                 )
             }
         }
-        Box(Modifier.width(1.dp).height(20.dp).background(Tonal.hairline()))
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .clickable(role = Role.Button, onClickLabel = "Dislike") { onDislike() }
-                .padding(horizontal = 14.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            AnimatedThumb(
-                on = disliked,
-                outline = YtIcons.ThumbDown,
-                solid = YtIcons.ThumbDownSolid,
-                size = ThumbIcon,
-                tint = plain,
-                rays = false,
-                description = "Dislike"
-            )
-        }
+    }
+    Box(Modifier.width(1.dp).height(20.dp).background(Tonal.hairline()))
+    BarSlot(
+        label = "Dislike",
+        state = if (disliked) "Disliked" else null,
+        onClick = onDislike
+    ) {
+        AnimatedThumb(
+            on = disliked,
+            outline = PmIcons.ThumbDown,
+            solid = PmIcons.ThumbDownSolid,
+            size = GlyphSize,
+            rays = false
+        )
     }
 }
 
 /** Download: a ring with the percent while it downloads, a tick once it is saved in the app. */
 @Composable
-private fun DownloadChip(info: PlayableInfo?, onClick: () -> Unit) {
+private fun RowScope.DownloadSlot(info: PlayableInfo?, onClick: () -> Unit) {
     var tick by remember { mutableIntStateOf(0) }
     val active = info?.let { activeDownload(it.url) }
     LaunchedEffect(active) {
@@ -362,39 +328,33 @@ private fun DownloadChip(info: PlayableInfo?, onClick: () -> Unit) {
     val percent = remember(tick, active) { active?.percent ?: 0 }
     val saved = info?.let { OfflineStore.forUrl(it.url).isNotEmpty() } == true
     val label = when {
-        active != null -> if (active.state == SaveState.Queued) "Waiting" else "$percent%"
+        active != null -> if (active.state == SaveState.Queued) "Download waiting" else "Downloading $percent%"
         saved -> "Downloaded"
         else -> "Download"
     }
-    PillBase(active = false, label = label, onClick = onClick) {
+    BarSlot(label = label, onClick = onClick) {
         when {
             active != null -> CircularProgressIndicator(
                 progress = { percent / 100f },
-                color = MaterialTheme.colorScheme.onSurface,
-                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
+                color = LocalContentColor.current,
+                trackColor = LocalContentColor.current.copy(alpha = 0.25f),
                 strokeWidth = 2.5.dp,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(20.dp)
             )
-            saved -> Icon(
-                Icons.Rounded.DownloadDone,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(PillIcon)
-            )
-            else -> Icon(
-                Icons.Rounded.Download,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(PillIcon)
-            )
+            saved -> SlotGlyph(PmIcons.DownloadDone)
+            else -> SlotGlyph(PmIcons.Download)
         }
     }
 }
 
 /**
- * The row under a video, in the order people reach for it: Like and dislike, Share, Download,
- * Background play, Save, Save to phone. Comments are not here: they sit right below. It slides sideways; every chip is the same
- * soft 36dp pill, so nothing shouts and nothing is left out.
+ * The bar under a video, in the order people reach for it: Like and dislike, Share, Download,
+ * Background play, Save, Save to phone. Comments are not here: they sit right below.
+ *
+ * All six live in one soft tonal bar that fits the width, so nothing scrolls away and nothing is
+ * cut off. There are no labels: each glyph is drawn to be told apart on its own (Download is an
+ * arrow onto a line, Save to phone is an arrow into a phone), and each says its name to a screen
+ * reader and on a long press. The one toggle, Background play, fills in when it is on.
  */
 @Composable
 fun ActionRow(
@@ -413,33 +373,38 @@ fun ActionRow(
     var downloadSheet by remember { mutableIntStateOf(0) }
 
     Column {
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        Row(
+            Modifier
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .fillMaxWidth()
+                .height(BarHeight)
+                .clip(BarShape)
+                .background(Tonal.fill())
+                .padding(horizontal = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            item {
-                ReactionPill(
-                    reaction = reaction,
-                    likeCount = meta?.likeCount,
-                    onLike = { vm.react(Reaction.Liked) },
-                    onDislike = { vm.react(Reaction.Disliked) }
-                )
-            }
-            item { ActionChip(Icons.Rounded.Share, "Share", onClick = onShare) }
-            item {
-                DownloadChip(info) {
-                    if (info == null) {
-                        Toast.makeText(context, "This video is still loading.", Toast.LENGTH_SHORT).show()
-                    } else if (info.live) {
-                        Toast.makeText(context, "Live streams can't be downloaded.", Toast.LENGTH_SHORT).show()
-                    } else {
-                        val busy = activeDownload(info.url) != null || OfflineStore.forUrl(info.url).isNotEmpty()
-                        downloadSheet = if (busy) 2 else 1
-                    }
+            ReactionSlots(
+                reaction = reaction,
+                likeCount = meta?.likeCount,
+                onLike = { vm.react(Reaction.Liked) },
+                onDislike = { vm.react(Reaction.Disliked) }
+            )
+            BarSlot(label = "Share", onClick = onShare) { SlotGlyph(PmIcons.Share) }
+            DownloadSlot(info) {
+                if (info == null) {
+                    Toast.makeText(context, "This video is still loading.", Toast.LENGTH_SHORT).show()
+                } else if (info.live) {
+                    Toast.makeText(context, "Live streams can't be downloaded.", Toast.LENGTH_SHORT).show()
+                } else {
+                    val busy = activeDownload(info.url) != null || OfflineStore.forUrl(info.url).isNotEmpty()
+                    downloadSheet = if (busy) 2 else 1
                 }
             }
-            item {
-                ActionChip(Icons.Rounded.Headphones, "Background play", active = background) {
+            BarSlot(
+                label = "Background play",
+                lit = background,
+                state = if (background) "On" else "Off",
+                onClick = {
                     background = !background
                     PlaybackPrefs.setBackground(context, background)
                     Toast.makeText(
@@ -448,9 +413,11 @@ fun ActionRow(
                         Toast.LENGTH_SHORT
                     ).show()
                 }
+            ) { SlotGlyph(PmIcons.Headphones) }
+            BarSlot(label = "Save", onClick = onSave) { SlotGlyph(PmIcons.Bookmark) }
+            BarSlot(label = "Save to phone", onClick = { if (info != null) phoneOpen = true }) {
+                SlotGlyph(PmIcons.PhoneSave)
             }
-            item { ActionChip(Icons.Rounded.BookmarkBorder, "Save", onClick = onSave) }
-            item { ActionChip(Icons.Rounded.SaveAlt, "Save to phone") { if (info != null) phoneOpen = true } }
         }
 
         if (phoneOpen && info != null) {
