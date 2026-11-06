@@ -37,8 +37,8 @@ fun HomeTopBar(onNotifications: () -> Unit, onSearch: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .height(56.dp)
-            .padding(start = 16.dp, end = 0.dp),
+            .height(44.dp)
+            .padding(start = 15.dp, end = 0.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         PlaymateMark()
@@ -50,8 +50,8 @@ fun HomeTopBar(onNotifications: () -> Unit, onSearch: () -> Unit) {
             },
             style = MaterialTheme.typography.titleLarge.copy(
                 fontFamily = LogoFont,
-                fontSize = 25.sp,
-                lineHeight = 30.sp,
+                fontSize = 21.sp,
+                lineHeight = 26.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.3).sp
             ),
