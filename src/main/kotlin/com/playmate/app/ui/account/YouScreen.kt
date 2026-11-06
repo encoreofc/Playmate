@@ -117,7 +117,7 @@ fun YouScreen(vm: AppViewModel) {
                         signedIn = vm.signedIn,
                         onAccount = { if (vm.signedIn) confirmSignOut = true else vm.openLogin() },
                         onNotifications = {
-                            Toast.makeText(context, "Notifications are coming soon", Toast.LENGTH_SHORT).show()
+                            vm.openNotifications()
                         },
                         onSearch = { vm.select(Tab.Search); vm.startEditing() },
                         onSettings = { showTheme = true }
