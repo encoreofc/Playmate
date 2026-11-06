@@ -121,22 +121,22 @@ fun HomeScreen(vm: AppViewModel) {
             onSearch = { vm.select(Tab.Search); vm.startEditing() }
         )
 
-        // The chip row, as on YouTube: the topic chips (32dp tall, 8dp corners).
+        // The chip row, as on YouTube: the topic chips (24dp tall, 5dp corners).
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             itemsIndexed(vm.feedChips) { index, chip ->
                 val selected = index == vm.selectedChip
                 Box(
                     Modifier
-                        .height(32.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .height(24.dp)
+                        .clip(RoundedCornerShape(5.dp))
                         .background(if (selected) chipSelected else chipIdle)
                         .clickable { vm.selectChip(index) }
-                        .padding(horizontal = 16.dp),
+                        .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
