@@ -117,7 +117,7 @@ fun HomeScreen(vm: AppViewModel) {
     Column(Modifier.fillMaxSize()) {
         HomeTopBar(
             onNotifications = {
-                Toast.makeText(context, "Notifications are coming soon", Toast.LENGTH_SHORT).show()
+                vm.openNotifications()
             },
             onSearch = { vm.select(Tab.Search); vm.startEditing() }
         )
