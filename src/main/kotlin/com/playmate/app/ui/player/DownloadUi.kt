@@ -7,6 +7,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +24,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -31,6 +39,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.Role
+import coil.compose.AsyncImage
+import com.playmate.app.data.AudioFormat
+import com.playmate.app.data.SaveTarget
+import com.playmate.app.data.SaveTargets
+import com.playmate.app.data.findTarget
+import com.playmate.app.ui.components.formatClock
+import com.playmate.app.ui.theme.LocalPmDark
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,8 +59,11 @@ import androidx.compose.ui.unit.sp
  * The look of Playmate's download sheets, in one place.
  *
  * Rules: black and white only (the ink is onBackground, so it is white on the dark theme and
- * black on the light one); thin lines instead of coloured fills; one corner radius everywhere;
+ * black on the light one); no boxes inside boxes: options are flat rows and only the chosen one
+ * is lifted with a faint fill; one weight for the title, one quiet grey for everything else;
  * small spaced capitals for labels. The accent colour stays out of these sheets on purpose.
+ * Both save sheets ("Download" and "Save to phone") are built from the same pieces below, so
+ * they read as one design.
  */
 
 /** The one corner radius of every control in the download sheets. */
@@ -235,7 +256,7 @@ internal fun PmSmallButton(text: String, onClick: () -> Unit) {
     }
 }
 
-/** Two or more choices side by side in one thin frame; the chosen one is solid ink. */
+/** Two or more choices side by side on one soft track; the chosen one is lifted out of it. */
 @Composable
 internal fun PmSegmented(
     labels: List<String>,
@@ -245,25 +266,31 @@ internal fun PmSegmented(
     modifier: Modifier = Modifier
 ) {
     val ink = MaterialTheme.colorScheme.onBackground
-    val frame = RoundedCornerShape(PmRadius)
+    val dark = LocalPmDark.current
     Row(
         modifier
             .fillMaxWidth()
-            .clip(frame)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, frame)
+            .clip(RoundedCornerShape(12.dp))
+            .background(ink.copy(alpha = 0.07f))
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         labels.forEachIndexed { index, label ->
             val on = index == selectedIndex
-            val tint = if (on) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.onSurfaceVariant
+            val tint = if (on) ink else MaterialTheme.colorScheme.onSurfaceVariant
             Row(
                 Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(PmRadius - 3.dp))
-                    .background(if (on) ink else Color.Transparent)
-                    .clickable { onSelect(index) }
-                    .padding(vertical = 10.dp),
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(
+                        when {
+                            !on -> Color.Transparent
+                            dark -> ink.copy(alpha = 0.16f)
+                            else -> Color.White
+                        }
+                    )
+                    .clickable(role = Role.Tab) { onSelect(index) }
+                    .padding(vertical = 9.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -271,11 +298,237 @@ internal fun PmSegmented(
                 Text(
                     label,
                     style = MaterialTheme.typography.labelLarge,
-                    fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
                     color = tint,
-                    modifier = Modifier.padding(start = 8.dp)
+                    modifier = Modifier.padding(start = 7.dp)
                 )
             }
         }
     }
 }
+
+// ------------------------------------------------------------------ the pieces both save sheets share
+
+/**
+ * Keeps a sheet below the status bar. A sheet that may fill the whole screen slides under the clock
+ * and the battery icons; this stops it a little short of the top.
+ */
+@Composable
+internal fun Modifier.pmSheetMaxHeight(): Modifier =
+    this.heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.88f).dp)
+
+/** The top of a save sheet: the picture with its length, what the sheet does, and the title on two lines. */
+@Composable
+internal fun DlHeader(
+    label: String,
+    title: String,
+    thumb: String?,
+    durationMs: Long?,
+    modifier: Modifier = Modifier,
+    below: @Composable ColumnScope.() -> Unit = {}
+) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Box(
+            Modifier
+                .width(116.dp)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            AsyncImage(
+                model = thumb,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            if (durationMs != null && durationMs > 0) {
+                Text(
+                    formatClock(durationMs),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(5.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                )
+            }
+        }
+        Column(Modifier.weight(1f).padding(start = 14.dp)) {
+            PmCaps(label)
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            below()
+        }
+    }
+}
+
+/**
+ * One quality or format: its name, what the person needs to know about it (rarely anything),
+ * its size, and a tick. No frame; the chosen row is only lifted with a faint fill.
+ */
+@Composable
+internal fun DlRow(
+    label: String,
+    note: String?,
+    recommended: Boolean,
+    size: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val ink = MaterialTheme.colorScheme.onBackground
+    Row(
+        Modifier
+            .padding(top = 2.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) ink.copy(alpha = 0.08f) else Color.Transparent)
+            .clickable(role = Role.RadioButton, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold
+                )
+                if (recommended) {
+                    Text(
+                        "Recommended",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(ink.copy(alpha = 0.08f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            if (note != null) {
+                Text(
+                    note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 1.dp)
+                )
+            }
+        }
+        Text(
+            size,
+            style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 12.dp, end = 14.dp)
+        )
+        PmCheck(selected)
+    }
+}
+
+/** "More formats · 6" / "Fewer formats": the quiet fold at the end of a list. */
+@Composable
+internal fun DlMore(open: Boolean, count: Int, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .padding(top = 6.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            if (open) "Fewer formats" else "More formats  ·  $count",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+/** Where the file goes and how much room is left: one line of text, not a card. */
+@Composable
+internal fun DlWhere(
+    title: String,
+    note: String?,
+    warning: Boolean = false,
+    actions: @Composable RowScope.() -> Unit = {}
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            Icons.Rounded.FolderOpen,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp)
+        )
+        Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (note != null) {
+                Text(
+                    note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 1.dp)
+                )
+            }
+        }
+        actions()
+    }
+}
+
+/** A plain text action at the end of a line ("Change"). */
+@Composable
+internal fun DlTextAction(text: String, onClick: () -> Unit) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    )
+}
+
+// ------------------------------------------------------------------ what to show, and in which order
+
+/** Options folded under "More formats": the other video codecs and the very big audio files. */
+internal fun SaveTarget.isExtra(): Boolean =
+    !primary || audioFormat == AudioFormat.FLAC || audioFormat == AudioFormat.WAV
+
+/** The one thing worth saying under a name. Codecs and containers are noise unless they are the unusual ones. */
+internal fun SaveTarget.rowNote(): String? = when {
+    !isAudio -> if (primary) null else detail
+    key.endsWith("|low") -> "Smaller file"
+    else -> null
+}
+
+/** The heading an audio option sits under. */
+internal fun audioGroupTitle(target: SaveTarget): String = when (target.audioFormat) {
+    AudioFormat.MP3 -> "MP3  ·  plays everywhere"
+    AudioFormat.M4A, AudioFormat.OPUS -> "Original  ·  no quality loss"
+    else -> "Lossless  ·  large files"
+}
+
+/** The pick that suits most people: video up to 720p (a modest file), or the original audio untouched. */
+internal fun recommendedFor(targets: SaveTargets, audio: Boolean): SaveTarget? =
+    if (audio) {
+        targets.audio.firstOrNull { it.audioFormat == AudioFormat.M4A } ?: targets.audio.firstOrNull()
+    } else {
+        findTarget(targets, "v|720|0|*")?.takeIf { !it.isAudio } ?: targets.video.firstOrNull()
+    }
