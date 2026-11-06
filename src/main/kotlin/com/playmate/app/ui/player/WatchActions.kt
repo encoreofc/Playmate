@@ -43,11 +43,13 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -84,7 +86,6 @@ import com.playmate.app.data.SaveState
 import com.playmate.app.data.WatchMeta
 import com.playmate.app.data.activeDownload
 import com.playmate.app.ui.components.SubscribeButton
-import com.playmate.app.ui.theme.Accent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.Animatable
@@ -102,8 +103,8 @@ import com.playmate.app.ui.theme.tonalPress
 private val Hashtag = Regex("#[\\p{L}\\p{N}_]+")
 
 /**
- * Title and the quiet line under it (views, age, hashtags). Tapping opens the full description
- * right here: three big numbers (likes, views, uploaded) and the text itself.
+ * Title and the quiet line under it (views, age, hashtags). Tapping it opens the description
+ * panel under the player (see [DescriptionPanel]); [onOpen] is null while the video is loading.
  */
 @Composable
 fun TitleBlock(
@@ -111,28 +112,25 @@ fun TitleBlock(
     channel: String,
     views: Long,
     uploaded: String?,
-    likes: String?,
-    description: String,
-    expanded: Boolean,
-    onToggle: () -> Unit
+    onOpen: (() -> Unit)?,
+    description: String = ""
 ) {
     val scheme = MaterialTheme.colorScheme
     val tags = remember(description) { Hashtag.findAll(description).map { it.value }.distinct().take(2).toList() }
     val viewsText = formatCount(views)?.let { "$it views" }
     val ago = agoText(uploaded)
-    val hasMore = description.isNotBlank()
 
     Column(
         Modifier
             .fillMaxWidth()
-            .clickable(enabled = hasMore, onClick = onToggle)
+            .clickable(enabled = onOpen != null, onClick = { onOpen?.invoke() })
             .padding(horizontal = 16.dp)
             .padding(top = 14.dp, bottom = 6.dp)
     ) {
         Text(
             title,
             style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, lineHeight = 25.sp),
-            maxLines = if (expanded) Int.MAX_VALUE else 2,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
         Spacer(Modifier.height(6.dp))
@@ -143,11 +141,9 @@ fun TitleBlock(
                 if (part == viewsText) withStyle(SpanStyle(fontWeight = FontWeight.Medium, color = scheme.onSurface)) { append(part) }
                 else append(part)
             }
-            if (!expanded) {
-                tags.forEach {
-                    append("  ")
-                    withStyle(SpanStyle(color = scheme.onSurfaceVariant.copy(alpha = 0.8f))) { append(it) }
-                }
+            tags.forEach {
+                append("  ")
+                withStyle(SpanStyle(color = scheme.onSurfaceVariant.copy(alpha = 0.8f))) { append(it) }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -159,58 +155,13 @@ fun TitleBlock(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false)
             )
-            if (hasMore && !expanded) {
+            if (onOpen != null) {
                 Text(
                     "  …more",
                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
                     color = scheme.onSurface
                 )
             }
-        }
-    }
-
-    if (expanded && hasMore) {
-        Column(
-            Modifier
-                .padding(horizontal = 12.dp, vertical = 6.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Tonal.fill())
-                .clickable(onClick = onToggle)
-                .padding(16.dp)
-        ) {
-            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), verticalAlignment = Alignment.CenterVertically) {
-                val stats = listOfNotNull(
-                    likes?.let { it to "Likes" },
-                    formatCount(views)?.let { it to "Views" },
-                    ago?.let { it to "Uploaded" }
-                )
-                stats.forEachIndexed { i, (value, label) ->
-                    if (i > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(Tonal.hairline()))
-                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            value,
-                            style = MaterialTheme.typography.titleMedium,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = scheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-            Box(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(1.dp).background(Tonal.hairline()))
-            Text(description, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                "Show less",
-                style = MaterialTheme.typography.labelLarge,
-                color = scheme.onSurface,
-                modifier = Modifier.padding(top = 12.dp)
-            )
         }
     }
 }
@@ -269,8 +220,9 @@ private val PillHeight = 36.dp
 private val PillIcon = 20.dp
 
 /**
- * The one shape every chip under the video is made from: a 36dp soft pill, an icon, a label.
- * Switched on (liked, downloaded, background play) it takes a light wash of the accent colour.
+ * The one shape every chip under the video is made from: a 36dp pill, an icon, a label. It is
+ * YouTube's grey; switched on (background play) it flips to YouTube's selected look, a white
+ * pill with dark text on the dark theme and the reverse on the light one. No accent colour.
  */
 @Composable
 private fun PillBase(
@@ -279,25 +231,27 @@ private fun PillBase(
     onClick: () -> Unit,
     leading: @Composable () -> Unit
 ) {
-    val dark = LocalPmDark.current
-    val container = if (active) Tonal.accentFill(dark) else Tonal.fill()
-    val content = if (active) Accent else MaterialTheme.colorScheme.onSurface
-    Row(
-        Modifier
-            .height(PillHeight)
-            .tonalPress(PillShape, container, onClick = onClick)
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        leading()
-        if (label != null) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelLarge,
-                color = content,
-                maxLines = 1,
-                modifier = Modifier.padding(start = 8.dp)
-            )
+    val scheme = MaterialTheme.colorScheme
+    val container = if (active) scheme.onSurface else Tonal.fill()
+    val content = if (active) scheme.surface else scheme.onSurface
+    CompositionLocalProvider(LocalContentColor provides content) {
+        Row(
+            Modifier
+                .height(PillHeight)
+                .tonalPress(PillShape, container, onClick = onClick)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            leading()
+            if (label != null) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = content,
+                    maxLines = 1,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
         }
     }
 }
@@ -310,9 +264,8 @@ private fun ActionChip(
     description: String? = null,
     onClick: () -> Unit
 ) {
-    val content = if (active) Accent else MaterialTheme.colorScheme.onSurface
     PillBase(active = active, label = label, onClick = onClick) {
-        Icon(icon, contentDescription = description, tint = content, modifier = Modifier.size(PillIcon))
+        Icon(icon, contentDescription = description, modifier = Modifier.size(PillIcon))
     }
 }
 
@@ -360,7 +313,7 @@ private fun ReactionPill(
             Icon(
                 if (liked) Icons.Rounded.ThumbUp else Icons.Rounded.ThumbUpOffAlt,
                 contentDescription = "Like",
-                tint = if (liked) Accent else plain,
+                tint = plain,
                 modifier = Modifier
                     .size(PillIcon)
                     .graphicsLayer {
@@ -372,7 +325,7 @@ private fun ReactionPill(
                 Text(
                     it,
                     style = MaterialTheme.typography.labelLarge,
-                    color = if (liked) Accent else plain,
+                    color = plain,
                     modifier = Modifier.padding(start = 8.dp)
                 )
             }
@@ -388,7 +341,7 @@ private fun ReactionPill(
             Icon(
                 if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
                 contentDescription = "Dislike",
-                tint = if (disliked) Accent else plain,
+                tint = plain,
                 modifier = Modifier.size(PillIcon)
             )
         }
@@ -413,19 +366,19 @@ private fun DownloadChip(info: PlayableInfo?, onClick: () -> Unit) {
         saved -> "Downloaded"
         else -> "Download"
     }
-    PillBase(active = active != null || saved, label = label, onClick = onClick) {
+    PillBase(active = false, label = label, onClick = onClick) {
         when {
             active != null -> CircularProgressIndicator(
                 progress = { percent / 100f },
-                color = Accent,
-                trackColor = Accent.copy(alpha = 0.25f),
+                color = MaterialTheme.colorScheme.onSurface,
+                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
                 strokeWidth = 2.5.dp,
                 modifier = Modifier.size(18.dp)
             )
             saved -> Icon(
                 Icons.Rounded.DownloadDone,
                 contentDescription = null,
-                tint = Accent,
+                tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(PillIcon)
             )
             else -> Icon(
@@ -440,14 +393,13 @@ private fun DownloadChip(info: PlayableInfo?, onClick: () -> Unit) {
 
 /**
  * The row under a video, in the order people reach for it: Like and dislike, Share, Download,
- * Background play, Save, Save to phone, Comments. It slides sideways; every chip is the same
+ * Background play, Save, Save to phone. Comments are not here: they sit right below. It slides sideways; every chip is the same
  * soft 36dp pill, so nothing shouts and nothing is left out.
  */
 @Composable
 fun ActionRow(
     vm: AppViewModel,
     meta: WatchMeta?,
-    onComments: () -> Unit,
     onShare: () -> Unit,
     onSave: () -> Unit
 ) {
@@ -499,14 +451,6 @@ fun ActionRow(
             }
             item { ActionChip(Icons.Rounded.BookmarkBorder, "Save", onClick = onSave) }
             item { ActionChip(Icons.Rounded.SaveAlt, "Save to phone") { if (info != null) phoneOpen = true } }
-            item {
-                ActionChip(
-                    Icons.Rounded.ChatBubbleOutline,
-                    vm.commentsTotal ?: meta?.commentCount ?: "Comments",
-                    description = "Comments",
-                    onClick = onComments
-                )
-            }
         }
 
         if (phoneOpen && info != null) {
