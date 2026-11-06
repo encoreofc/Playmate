@@ -54,9 +54,9 @@ fun AppRoot(vm: AppViewModel) {
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
-            // Home pads for the status bar itself; letting Scaffold add it too doubled the gap at the top.
+            // Home and Subscriptions pad for the status bar themselves; letting Scaffold add it too doubled the gap at the top.
             // Other screens keep exactly what they had.
-            contentWindowInsets = if (vm.tab == Tab.Home && vm.channel == null) WindowInsets(0, 0, 0, 0)
+            contentWindowInsets = if ((vm.tab == Tab.Home || vm.tab == Tab.Subscriptions) && vm.channel == null) WindowInsets(0, 0, 0, 0)
             else ScaffoldDefaults.contentWindowInsets,
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
