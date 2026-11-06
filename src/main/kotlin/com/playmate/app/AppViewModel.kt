@@ -73,6 +73,9 @@ data class RepliesState(
     val error: String? = null
 )
 
+/** What the signed-in account has done with one comment: liked it, disliked it, or neither. */
+data class CommentVote(val liked: Boolean, val disliked: Boolean)
+
 /** Opens the Shorts screen: the Shorts to start with and which one to show first. A new object per opening. */
 class ShortsLaunch(val items: List<VideoItem>, val start: Int)
 
@@ -140,6 +143,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var commentSorts by mutableStateOf<List<SortOption>>(emptyList()); private set
     var postingComment by mutableStateOf(false); private set
     val replies = mutableStateMapOf<String, RepliesState>()
+    /** Likes and dislikes the account has just given to comments; they win over what the page said. */
+    val votes = mutableStateMapOf<String, CommentVote>()
+    var postingReply by mutableStateOf(false); private set
 
     var playlists by mutableStateOf<Load<List<PlaylistOption>>?>(null); private set
 
@@ -911,7 +917,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         createParams = null
         loadingMoreComments = false
         postingComment = false
+        postingReply = false
         replies.clear()
+        votes.clear()
         playlists = null
     }
 
@@ -1019,6 +1027,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         comments = Load.Loading
         commentsNext = null
         replies.clear()
+        votes.clear()
         commentsJob = viewModelScope.launch {
             val start = token ?: run {
                 metaJob?.join()
@@ -1105,6 +1114,108 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     replies[commentId] = current.copy(loading = false, error = it.message ?: "Couldn't load replies.")
                 }
         }
+    }
+
+    /** Opens a comment's replies: loads them the first time, and always leaves them marked open. */
+    fun openReplies(comment: CommentItem) {
+        val current = replies[comment.id]
+        val token = comment.repliesToken
+        when {
+            current != null && (current.items.isNotEmpty() || current.loading) ->
+                replies[comment.id] = current.copy(open = true)
+
+            token != null ->
+                fetchReplies(comment.id, token, RepliesState(emptyList(), null, loading = true, open = true))
+
+            else -> replies[comment.id] =
+                current?.copy(open = true) ?: RepliesState(emptyList(), null, loading = false, open = true)
+        }
+    }
+
+    /** What the account has done with [comment] right now. */
+    fun voteOf(comment: CommentItem): CommentVote =
+        votes[comment.id] ?: CommentVote(comment.liked, comment.disliked)
+
+    fun likeComment(comment: CommentItem) = voteComment(comment, like = true)
+
+    fun dislikeComment(comment: CommentItem) = voteComment(comment, like = false)
+
+    /** Like or dislike one comment. Tapping the one that is already on takes it back. */
+    private fun voteComment(comment: CommentItem, like: Boolean) {
+        if (!ensureSignedIn(if (like) "like comments" else "dislike comments")) return
+        val before = voteOf(comment)
+        val after = if (like) CommentVote(liked = !before.liked, disliked = false)
+        else CommentVote(liked = false, disliked = !before.disliked)
+        val calls = comment.actions
+        val action = if (like) {
+            if (before.liked) calls.unlike else calls.like
+        } else {
+            if (before.disliked) calls.undislike else calls.dislike
+        }
+        if (action == null) {
+            toast = "This comment can't be rated."
+            return
+        }
+        votes[comment.id] = after
+        val generation = commentsGeneration
+        viewModelScope.launch {
+            attempt { Engage.commentAction(action) }.onFailure {
+                if (generation == commentsGeneration && votes[comment.id] === after) votes[comment.id] = before
+                toast = "Couldn't update your vote: ${it.message ?: "unknown error"}"
+            }
+        }
+    }
+
+    /**
+     * Writes a reply in the thread of [parent]. [target] is the comment the person pressed Reply on
+     * (the parent itself, or one of its replies).
+     */
+    fun postReply(parent: CommentItem, target: CommentItem, text: String, onPosted: () -> Unit) {
+        val body = text.trim()
+        if (body.isEmpty() || postingReply) return
+        if (!ensureSignedIn("reply")) return
+        val params = target.actions.replyParams ?: parent.actions.replyParams ?: run {
+            toast = "Replying isn't available on this comment."
+            return
+        }
+        postingReply = true
+        val generation = commentsGeneration
+        viewModelScope.launch {
+            attempt { Engage.replyToComment(params, body) }
+                .onSuccess {
+                    if (generation == commentsGeneration) {
+                        val mine = CommentItem(
+                            id = "mine-${System.nanoTime()}",
+                            author = account?.handle ?: account?.name ?: "You",
+                            avatar = account?.avatar,
+                            text = body,
+                            published = "just now",
+                            likes = null,
+                            replies = null,
+                            repliesToken = null,
+                            isReply = true
+                        )
+                        val current = replies[parent.id] ?: RepliesState(emptyList(), null, loading = false, open = true)
+                        replies[parent.id] = current.copy(items = listOf(mine) + current.items, open = true)
+                        val list = (comments as? Load.Ready)?.data
+                        if (list != null) {
+                            comments = Load.Ready(list.map { c ->
+                                if (c.id != parent.id) c else c.copy(replies = plusOne(c.replies))
+                            })
+                        }
+                    }
+                    onPosted()
+                }
+                .onFailure { toast = "Couldn't post your reply: ${it.message ?: "unknown error"}" }
+            postingReply = false
+        }
+    }
+
+    /** One more reply on a printed count; a count such as "1.2K" is left as YouTube wrote it. */
+    private fun plusOne(text: String?): String {
+        if (text.isNullOrBlank()) return "1"
+        val n = text.replace(",", "").toLongOrNull() ?: return text
+        return (n + 1).toString()
     }
 
     fun postComment(text: String, onPosted: () -> Unit) {
