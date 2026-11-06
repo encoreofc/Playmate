@@ -56,6 +56,7 @@ import com.playmate.app.Tab
 import com.playmate.app.data.Load
 import com.playmate.app.ui.components.ErrorState
 import com.playmate.app.ui.components.HomeTopBar
+import com.playmate.app.ui.components.SignInPill
 import com.playmate.app.ui.components.SkeletonCard
 import com.playmate.app.ui.components.VideoCard
 
@@ -121,34 +122,40 @@ fun HomeScreen(vm: AppViewModel) {
             onSearch = { vm.select(Tab.Search); vm.startEditing() }
         )
 
-        // The chip row, as on YouTube: the topic chips (24dp tall, 5dp corners).
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            itemsIndexed(vm.feedChips) { index, chip ->
-                val selected = index == vm.selectedChip
-                Box(
-                    Modifier
-                        .height(24.dp)
-                        .clip(RoundedCornerShape(5.dp))
-                        .background(if (selected) chipSelected else chipIdle)
-                        .clickable { vm.selectChip(index) }
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        chip.label,
-                        fontSize = 14.sp,
-                        lineHeight = 18.sp,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 1,
-                        color = if (selected) chipSelectedText else chipIdleText
-                    )
+        // The chip row, as on YouTube: the topic chips (24dp tall, 5dp corners). They are YouTube's
+        // own chips for the account's history, so with none there is no row at all, only the 8dp
+        // YouTube leaves between the bar and the first video.
+        if (vm.feedChips.isNotEmpty()) {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                itemsIndexed(vm.feedChips) { index, chip ->
+                    val selected = index == vm.selectedChip
+                    Box(
+                        Modifier
+                            .height(24.dp)
+                            .clip(RoundedCornerShape(5.dp))
+                            .background(if (selected) chipSelected else chipIdle)
+                            .clickable { vm.selectChip(index) }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            chip.label,
+                            fontSize = 14.sp,
+                            lineHeight = 18.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1,
+                            color = if (selected) chipSelectedText else chipIdleText
+                        )
+                    }
                 }
             }
+        } else {
+            Spacer(Modifier.height(8.dp))
         }
 
         PullToRefreshBox(
@@ -157,6 +164,16 @@ fun HomeScreen(vm: AppViewModel) {
             modifier = Modifier.weight(1f).fillMaxWidth()
         ) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+            // Nobody signed in: YouTube's rounded sign-in bar above the feed (12dp sides, 17dp before the first video).
+            if (!vm.signedIn) {
+                item(key = "sign-in-bar") {
+                    SignInPill(
+                        text = "Sign in to find more videos you like.",
+                        onClick = vm::openLogin,
+                        modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 17.dp)
+                    )
+                }
+            }
             vm.feedNote?.let { note ->
                 item {
                     Text(
