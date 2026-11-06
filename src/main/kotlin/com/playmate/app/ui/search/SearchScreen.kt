@@ -3,7 +3,6 @@ package com.playmate.app.ui.search
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -44,7 +43,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -69,6 +67,7 @@ import com.playmate.app.Tab
 import com.playmate.app.data.Load
 import com.playmate.app.data.RecentSearch
 import com.playmate.app.ui.components.ErrorState
+import com.playmate.app.ui.components.PlaymateMark
 import com.playmate.app.ui.components.PmIcons
 import com.playmate.app.ui.components.SkeletonCard
 import com.playmate.app.ui.components.VideoCard
@@ -87,7 +86,13 @@ fun SearchScreen(vm: AppViewModel) {
     val focusManager = LocalFocusManager.current
 
     LaunchedEffect(Unit) {
-        if (vm.query.isEmpty() && vm.results == null) focus.requestFocus()
+        if (vm.editing) {
+            // Opened from the search icon: an empty box with the saved searches, like YouTube.
+            vm.beginSearch()
+            focus.requestFocus()
+        } else if (vm.query.isEmpty() && vm.results == null) {
+            focus.requestFocus()
+        }
     }
 
     // While typing over a finished search, Back returns to those results instead of leaving search.
@@ -142,15 +147,11 @@ private fun SearchField(
     onFocused: () -> Unit,
     focus: FocusRequester
 ) {
-    var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(14.dp)
-    val rim = if (focused) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-    else MaterialTheme.colorScheme.outlineVariant
-
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(start = 4.dp, end = 14.dp, top = 6.dp, bottom = 8.dp),
+            .height(56.dp)
+            .padding(start = 4.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onBack) {
@@ -159,23 +160,16 @@ private fun SearchField(
         Row(
             Modifier
                 .weight(1f)
-                .height(46.dp)
-                .clip(shape)
+                .height(40.dp)
+                .clip(RoundedCornerShape(50))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                .border(if (focused) 1.2.dp else 0.8.dp, rim, shape)
-                .padding(start = 14.dp),
+                .padding(start = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                PmIcons.Search,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
-            Box(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+            Box(Modifier.weight(1f)) {
                 if (value.isEmpty()) {
                     Text(
-                        "Search or paste a link",
+                        "Search Playmate",
                         style = MaterialTheme.typography.bodyLarge.bangla(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
@@ -186,29 +180,26 @@ private fun SearchField(
                     onValueChange = onValueChange,
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.bangla().copy(color = MaterialTheme.colorScheme.onSurface),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(focus)
-                        .onFocusChanged {
-                            focused = it.isFocused
-                            if (it.isFocused) onFocused()
-                        }
+                        .onFocusChanged { if (it.isFocused) onFocused() }
                 )
             }
             if (value.isNotEmpty()) {
-                IconButton(onClick = onClear, modifier = Modifier.size(44.dp)) {
+                IconButton(onClick = onClear, modifier = Modifier.size(40.dp)) {
                     Icon(
                         PmIcons.Close,
                         contentDescription = "Clear",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             } else {
-                Spacer(Modifier.width(14.dp))
+                Spacer(Modifier.width(16.dp))
             }
         }
     }
@@ -339,20 +330,9 @@ private fun EmptySearch() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(
-            PmIcons.Search,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(44.dp).alpha(0.7f)
-        )
-        Spacer(Modifier.height(14.dp))
+        PlaymateMark(Modifier.size(width = 56.dp, height = 40.dp))
+        Spacer(Modifier.height(16.dp))
         Text("Search Playmate", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Videos, channels, or paste a link",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 
