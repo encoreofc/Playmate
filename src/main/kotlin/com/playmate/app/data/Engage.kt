@@ -94,14 +94,32 @@ object Engage {
 
     // ---------------------------------------------------------------- playlists ("Save")
 
-    /** The account's playlists, with a flag for the ones that already hold [videoId]. */
+    /**
+     * The account's playlists, with a flag for the ones that already hold [videoId].
+     *
+     * YouTube changed what this call wants: the site now sends a list ("videoIds") where it used to
+     * send one "videoId", and the old form is answered with 400 "Request contains an invalid
+     * argument". The current form goes first; the old one stays as a fallback in case a
+     * different version of the site is still being served.
+     */
     suspend fun playlistsFor(videoId: String): List<PlaylistOption> {
-        val root = withContext(Dispatchers.IO) {
-            InnerTube.post(
-                "playlist/get_add_to_playlist",
-                JSONObject().put("videoId", videoId).put("excludeWatchLater", false)
-            )
+        val bodies = listOf<() -> JSONObject>(
+            { JSONObject().put("videoIds", JSONArray().put(videoId)).put("excludeWatchLater", false) },
+            { JSONObject().put("videoId", videoId).put("excludeWatchLater", false) },
+            { JSONObject().put("videoIds", JSONArray().put(videoId)) }
+        )
+        var failure: IOException? = null
+        var root: JSONObject? = null
+        for (body in bodies) {
+            try {
+                root = withContext(Dispatchers.IO) { InnerTube.post("playlist/get_add_to_playlist", body()) }
+                break
+            } catch (e: IOException) {
+                failure = e
+            }
         }
+        if (root == null) throw failure ?: IOException("Couldn't load your playlists")
+
         val found = findAllObjects(root, "playlistAddToOptionRenderer").mapNotNull { o ->
             val id = o.optString("playlistId")
             if (id.isBlank()) return@mapNotNull null
@@ -110,7 +128,7 @@ object Engage {
                 title = ytText(o.optJSONObject("title")).ifBlank { id },
                 contains = o.optString("containsSelectedVideos") == "ALL"
             )
-        }
+        }.distinctBy { it.id }
         // If the answer could not be read, "Watch later" still works: it always exists.
         return found.ifEmpty { listOf(PlaylistOption("WL", "Watch later", false)) }
     }
@@ -147,6 +165,39 @@ object Engage {
             )
             if (root.has("success") && !root.optBoolean("success")) {
                 throw IOException("YouTube didn't accept the comment")
+            }
+        }
+    }
+
+    /**
+     * Like, unlike, dislike or undislike one comment. [action] is the opaque value YouTube handed
+     * out with that comment for exactly this button; it is sent back unchanged.
+     */
+    suspend fun commentAction(action: String) {
+        withContext(Dispatchers.IO) {
+            val root = InnerTube.post(
+                "comment/perform_comment_action",
+                JSONObject().put("actions", JSONArray().put(action))
+            )
+            val results = root.optJSONArray("actionResults")
+            if (results != null) {
+                for (i in 0 until results.length()) {
+                    val status = results.optJSONObject(i)?.optString("status").orEmpty()
+                    if (status.contains("FAIL", ignoreCase = true)) throw IOException("YouTube said $status")
+                }
+            }
+        }
+    }
+
+    /** Writes a reply under a comment; [replyParams] came with that comment. */
+    suspend fun replyToComment(replyParams: String, text: String) {
+        withContext(Dispatchers.IO) {
+            val root = InnerTube.post(
+                "comment/create_comment_reply",
+                JSONObject().put("createReplyParams", replyParams).put("commentText", text)
+            )
+            if (root.has("success") && !root.optBoolean("success")) {
+                throw IOException("YouTube didn't accept the reply")
             }
         }
     }
