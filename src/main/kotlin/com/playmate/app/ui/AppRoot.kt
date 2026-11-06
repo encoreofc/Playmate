@@ -4,11 +4,13 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
@@ -52,6 +54,10 @@ fun AppRoot(vm: AppViewModel) {
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
+            // Home pads for the status bar itself; letting Scaffold add it too doubled the gap at the top.
+            // Other screens keep exactly what they had.
+            contentWindowInsets = if (vm.tab == Tab.Home && vm.channel == null) WindowInsets(0, 0, 0, 0)
+            else ScaffoldDefaults.contentWindowInsets,
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
                 Column {
