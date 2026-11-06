@@ -59,4 +59,26 @@ object PmIcons {
     val Insert: ImageVector by lazy {
         line("PmInsert", "M17.2 17.2L6.8 6.8M6.8 15V6.8H15")
     }
+
+    /** Bell: notifications. */
+    val Bell: ImageVector by lazy {
+        line("PmBell", "M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.6 2H4.9z", "M10 21a2 2 0 0 0 4 0")
+    }
+
+    /** The @ sign: mentions. */
+    val At: ImageVector by lazy {
+        line(
+            "PmAt",
+            "M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4z",
+            "M15.2 8.8v4.3a2.1 2.1 0 0 0 4.2 0V12a7.4 7.4 0 1 0-2.9 5.9"
+        )
+    }
+
+    /** Speech bubble: comments. */
+    val Comment: ImageVector by lazy {
+        line(
+            "PmComment",
+            "M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5h-7l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5z"
+        )
+    }
 }
