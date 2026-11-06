@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -38,6 +39,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import com.playmate.app.ui.theme.LocalPmDark
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
@@ -101,80 +104,80 @@ private fun buildEntries(items: List<VideoItem>, hasMore: Boolean): List<Entry> 
 fun HomeScreen(vm: AppViewModel) {
     val context = LocalContext.current
     val hasMore = vm.feedToken != null
+    // Chip colours measured from YouTube's own screenshots, one set per theme.
+    val dark = LocalPmDark.current
+    val chipIdle = if (dark) Color(0xFF3D3E40) else Color(0xFFEBECEE)
+    val chipIdleText = if (dark) MaterialTheme.colorScheme.onBackground else Color(0xFF595959)
+    val chipSelected = if (dark) MaterialTheme.colorScheme.onBackground else Color(0xFF606060)
+    val chipSelectedText = if (dark) MaterialTheme.colorScheme.background else Color.White
     val entries = remember(vm.feed, hasMore) {
         (vm.feed as? Load.Ready)?.data?.let { buildEntries(it, hasMore) }.orEmpty()
     }
-    PullToRefreshBox(
-        isRefreshing = vm.refreshing,
-        onRefresh = { vm.loadFeed(force = true) },
-        modifier = Modifier.fillMaxSize()
-    ) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-            item {
-                HomeTopBar(
-                    onNotifications = {
-                        Toast.makeText(context, "Notifications are coming soon", Toast.LENGTH_SHORT).show()
-                    },
-                    onSearch = { vm.select(Tab.Search); vm.startEditing() }
-                )
-            }
+    // The logo bar and the chip row sit OUTSIDE the scrolling list, so they stay pinned at the top like YouTube.
+    Column(Modifier.fillMaxSize()) {
+        HomeTopBar(
+            onNotifications = {
+                Toast.makeText(context, "Notifications are coming soon", Toast.LENGTH_SHORT).show()
+            },
+            onSearch = { vm.select(Tab.Search); vm.startEditing() }
+        )
 
-            // The chip row, as on YouTube: a compass chip, a 16dp gap, then the topic chips (32dp tall, 8dp corners).
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+        // The chip row, as on YouTube: a compass chip, then the topic chips (32dp tall, 8dp corners).
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            item(key = "explore") {
+                Box(
+                    Modifier
+                        .height(32.dp)
+                        .width(42.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(chipIdle)
+                        .clickable {
+                            Toast.makeText(context, "Explore is coming soon", Toast.LENGTH_SHORT).show()
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    item(key = "explore") {
-                        Box(
-                            Modifier
-                                .padding(end = 8.dp)
-                                .height(32.dp)
-                                .width(42.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable {
-                                    Toast.makeText(context, "Explore is coming soon", Toast.LENGTH_SHORT).show()
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Outlined.Explore,
-                                contentDescription = "Explore",
-                                tint = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-                    itemsIndexed(vm.feedChips) { index, chip ->
-                        val selected = index == vm.selectedChip
-                        Box(
-                            Modifier
-                                .height(32.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (selected) MaterialTheme.colorScheme.onBackground
-                                    else MaterialTheme.colorScheme.surfaceVariant
-                                )
-                                .clickable { vm.selectChip(index) }
-                                .padding(horizontal = 12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                chip.label,
-                                fontSize = 14.sp,
-                                lineHeight = 18.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                color = if (selected) MaterialTheme.colorScheme.background
-                                else MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-                    }
+                    Icon(
+                        Icons.Outlined.Explore,
+                        contentDescription = "Explore",
+                        tint = chipIdleText,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
             }
+            itemsIndexed(vm.feedChips) { index, chip ->
+                val selected = index == vm.selectedChip
+                Box(
+                    Modifier
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) chipSelected else chipIdle)
+                        .clickable { vm.selectChip(index) }
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        chip.label,
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1,
+                        color = if (selected) chipSelectedText else chipIdleText
+                    )
+                }
+            }
+        }
 
+        PullToRefreshBox(
+            isRefreshing = vm.refreshing,
+            onRefresh = { vm.loadFeed(force = true) },
+            modifier = Modifier.weight(1f).fillMaxWidth()
+        ) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
             vm.feedNote?.let { note ->
                 item {
                     Text(
@@ -215,6 +218,7 @@ fun HomeScreen(vm: AppViewModel) {
                         }
                     }
                 }
+            }
             }
         }
     }
