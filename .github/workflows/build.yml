@@ -37,7 +37,14 @@ jobs:
           PLAYMATE_KEYSTORE_PASSWORD: ${{ secrets.PLAYMATE_KEYSTORE_PASSWORD }}
           PLAYMATE_KEY_ALIAS: ${{ secrets.PLAYMATE_KEY_ALIAS }}
           PLAYMATE_KEY_PASSWORD: ${{ secrets.PLAYMATE_KEY_PASSWORD }}
-        run: gradle assembleRelease --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          if ! gradle assembleRelease --no-daemon --console=plain 2>&1 | tee build.log; then
+            echo "=============== COMPILE ERRORS ==============="
+            grep -E '^e: ' build.log | tee errors.txt || true
+            grep -E '^e: ' build.log | head -20 | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
 
       - name: Name the APK
         run: |
