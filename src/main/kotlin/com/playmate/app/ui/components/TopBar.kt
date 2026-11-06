@@ -1,5 +1,6 @@
 package com.playmate.app.ui.components
 
+import android.graphics.Typeface
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,10 +21,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+/** The wordmark font: Roboto Condensed Bold (built into Android), the same kind of clean, serious face YouTube's own logo uses. */
+private val LogoFont = FontFamily(Typeface.create("sans-serif-condensed", Typeface.BOLD))
 
 /** Top of Home, like YouTube: the logo on the left, notifications and search on the right. Nothing else. */
 @Composable
@@ -44,9 +49,11 @@ fun HomeTopBar(onNotifications: () -> Unit, onSearch: () -> Unit) {
                 withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary)) { append("mate") }
             },
             style = MaterialTheme.typography.titleLarge.copy(
-                fontSize = 22.sp,
+                fontFamily = LogoFont,
+                fontSize = 25.sp,
+                lineHeight = 30.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = (-0.8).sp
+                letterSpacing = (-0.3).sp
             ),
             modifier = Modifier.weight(1f)
         )
