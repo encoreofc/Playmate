@@ -23,7 +23,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -122,33 +121,13 @@ fun HomeScreen(vm: AppViewModel) {
             onSearch = { vm.select(Tab.Search); vm.startEditing() }
         )
 
-        // The chip row, as on YouTube: a compass chip, then the topic chips (32dp tall, 8dp corners).
+        // The chip row, as on YouTube: the topic chips (32dp tall, 8dp corners).
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            item(key = "explore") {
-                Box(
-                    Modifier
-                        .height(32.dp)
-                        .width(42.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(chipIdle)
-                        .clickable {
-                            Toast.makeText(context, "Explore is coming soon", Toast.LENGTH_SHORT).show()
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Outlined.Explore,
-                        contentDescription = "Explore",
-                        tint = chipIdleText,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
             itemsIndexed(vm.feedChips) { index, chip ->
                 val selected = index == vm.selectedChip
                 Box(
