@@ -39,6 +39,10 @@ import com.playmate.app.data.Load
 import com.playmate.app.data.Playing
 import com.playmate.app.ui.player.PlayerHolder
 import kotlinx.coroutines.delay
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import com.playmate.app.ui.theme.Tonal
 import androidx.compose.foundation.shape.RoundedCornerShape
 
 /** The bar shown above the tab bar while a video plays in the background of the app. */
@@ -68,6 +72,8 @@ fun MiniPlayer(playing: Playing, onExpand: () -> Unit, onClose: () -> Unit) {
         }
     }
 
+    val glide by animateFloatAsState(progress, tween(500, easing = LinearEasing), label = "miniProgress")
+
     val info = (playing.info as? Load.Ready)?.data
     val title = info?.title ?: playing.seed.title
     val channel = info?.channel ?: playing.seed.channel
@@ -80,10 +86,10 @@ fun MiniPlayer(playing: Playing, onExpand: () -> Unit, onClose: () -> Unit) {
             .clickable(onClick = onExpand)
     ) {
         LinearProgressIndicator(
-            progress = { progress },
+            progress = { glide },
             modifier = Modifier.fillMaxWidth().height(2.dp),
             color = MaterialTheme.colorScheme.primary,
-            trackColor = Color.Transparent
+            trackColor = Tonal.hairline()
         )
         Row(
             Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
@@ -96,8 +102,8 @@ fun MiniPlayer(playing: Playing, onExpand: () -> Unit, onClose: () -> Unit) {
                 modifier = Modifier
                     .width(80.dp)
                     .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Tonal.fillStrong())
             )
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(
