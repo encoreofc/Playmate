@@ -2,6 +2,7 @@ package com.playmate.app.ui.player
 
 import android.os.StatFs
 import android.widget.Toast
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,18 +22,13 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -45,8 +41,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.playmate.app.data.AudioFormat
@@ -64,7 +60,6 @@ import com.playmate.app.data.probeSize
 import com.playmate.app.data.safeFileName
 import com.playmate.app.data.saveTargetsFor
 import com.playmate.app.data.sizeIsApproximate
-import com.playmate.app.ui.theme.Accent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -135,7 +130,9 @@ fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        shape = PmSheetShape,
+        dragHandle = { PmDragHandle() }
     ) {
         Column(Modifier.navigationBarsPadding()) {
             Column(
@@ -144,28 +141,20 @@ fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp)
             ) {
-                Text("Download", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    info.title,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+                PmSheetHeader("Download", info.title)
 
                 when {
-                    info.live -> DlNote("Live streams can't be downloaded.")
-                    nothing -> DlNote("No downloadable files were found for this video.")
+                    info.live -> PmNote("Live streams can't be downloaded.")
+                    nothing -> PmNote("No downloadable files were found for this video.")
                     else -> {
                         if (videoList.isNotEmpty()) {
-                            DlSection("Video")
+                            PmSectionLabel("Video")
                             videoList.forEach { target ->
                                 DlOption(target, sizeOf(target), target === shown) { picked = target }
                             }
                         }
                         audioList.groupBy { dlAudioGroup(it) }.forEach { (title, items) ->
-                            DlSection(title)
+                            PmSectionLabel(title)
                             items.forEach { target ->
                                 DlOption(target, sizeOf(target), target === shown) { picked = target }
                             }
@@ -173,76 +162,68 @@ fun DownloadSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                         if (extra > 0) {
                             Row(
                                 Modifier
-                                    .padding(top = 12.dp)
+                                    .padding(top = 16.dp)
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(PmRadius))
                                     .clickable {
                                         more = !more
                                         // Folding the extras away must not leave one of them quietly selected.
                                         if (!more) picked = picked?.takeIf { !isHeavy(it) }
                                     }
-                                    .padding(horizontal = 4.dp, vertical = 10.dp),
+                                    .padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     if (more) "Fewer formats" else "More formats  ·  $extra",
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.weight(1f)
                                 )
                                 Icon(
                                     if (more) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         }
                         if (!ffmpegReady) {
-                            DlNote("MP3, FLAC and WAV aren't available on this phone right now.")
+                            PmNote("MP3, FLAC and WAV aren't available on this phone right now.")
                         }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(16.dp))
             }
 
-            if (tight) {
-                Text(
-                    "This may not fit: it needs about ${formatSize((needed ?: 0L) * 2)} of free space while it downloads.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-                )
-            } else if (free > 0) {
-                Text(
-                    "Kept inside Playmate  ·  ${formatSize(free)} free on your phone",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-                )
-            }
+            PmHairline()
+            Column(Modifier.padding(horizontal = 20.dp).padding(top = 12.dp, bottom = 16.dp)) {
+                if (tight) {
+                    Text(
+                        "This may not fit: it needs about ${formatSize((needed ?: 0L) * 2)} of free space while it downloads.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
+                } else if (free > 0) {
+                    Text(
+                        "Kept inside Playmate  ·  ${formatSize(free)} free on your phone",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
+                }
 
-            Button(
-                onClick = {
-                    val choice = shown
-                    if (choice != null) {
-                        SaveCenter.start(context, info, choice, safeFileName(info.title), offline = true)
-                        Toast.makeText(context, "Downloading. Progress is in the Downloads tab.", Toast.LENGTH_LONG).show()
-                        onDismiss()
+                PmPrimaryButton(
+                    text = if (shown != null) "Download ${shown.label}  ·  ${sizeOf(shown)}" else "Download",
+                    icon = Icons.Rounded.Download,
+                    enabled = shown != null && !info.live,
+                    onClick = {
+                        val choice = shown
+                        if (choice != null) {
+                            SaveCenter.start(context, info, choice, safeFileName(info.title), offline = true)
+                            Toast.makeText(context, "Downloading. Progress is in the Downloads tab.", Toast.LENGTH_LONG).show()
+                            onDismiss()
+                        }
                     }
-                },
-                enabled = shown != null && !info.live,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Color.White),
-                modifier = Modifier
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-                    .fillMaxWidth()
-                    .height(54.dp)
-            ) {
-                Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(22.dp))
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    if (shown != null) "Download ${shown.label}  ·  ${sizeOf(shown)}" else "Download",
-                    style = MaterialTheme.typography.titleSmall
                 )
             }
         }
@@ -288,49 +269,69 @@ fun DownloadStateSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        shape = PmSheetShape,
+        dragHandle = { PmDragHandle() }
     ) {
         Column(
             Modifier
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 16.dp)
+                .padding(bottom = 20.dp)
         ) {
-            Text(
-                info.title,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+            PmSheetHeader(if (active != null) "Downloading" else "Download", info.title)
 
             if (active != null) {
-                Text(
-                    stateText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 14.dp)
-                )
+                Row(
+                    Modifier.padding(top = 20.dp).fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stateText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "$percent%",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                }
                 LinearProgressIndicator(
                     progress = { percent / 100f },
-                    color = Accent,
-                    trackColor = MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.padding(top = 8.dp).fillMaxWidth()
+                    color = MaterialTheme.colorScheme.onBackground,
+                    trackColor = MaterialTheme.colorScheme.outlineVariant,
+                    modifier = Modifier.padding(top = 10.dp).fillMaxWidth().height(3.dp)
                 )
-                TextButton(
+                PmOutlineButton(
+                    text = "Cancel download",
                     onClick = {
                         SaveCenter.cancel(active)
                         onDismiss()
                     },
-                    modifier = Modifier.padding(top = 4.dp)
-                ) { Text("Cancel download") }
+                    modifier = Modifier.padding(top = 16.dp)
+                )
             }
 
+            if (saved.isNotEmpty()) {
+                PmSectionLabel("Saved in Playmate")
+            }
             saved.forEach { video ->
                 Row(
-                    Modifier.fillMaxWidth().padding(top = 12.dp),
+                    Modifier
+                        .padding(top = 8.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(PmRadius))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(PmRadius))
+                        .padding(start = 14.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Rounded.DownloadDone, contentDescription = null, tint = Accent)
+                    Icon(
+                        Icons.Rounded.DownloadDone,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(22.dp)
+                    )
                     Column(Modifier.weight(1f).padding(start = 12.dp)) {
                         Text(
                             if (video.isAudio) "Audio  ·  ${video.quality}" else video.quality,
@@ -346,62 +347,60 @@ fun DownloadStateSheet(
                         OfflineStore.remove(context, video)
                         if (OfflineStore.forUrl(info.url).isEmpty() && activeDownload(info.url) == null) onDismiss()
                     }) {
-                        Icon(Icons.Rounded.Delete, contentDescription = "Delete download")
+                        Icon(
+                            Icons.Rounded.Delete,
+                            contentDescription = "Delete download",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
 
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp)) {
-                TextButton(onClick = onGoTo) { Text("Go to Downloads") }
-                TextButton(onClick = onAnother) { Text("Download another version") }
-            }
+            PmPrimaryButton(
+                text = "Go to Downloads",
+                onClick = onGoTo,
+                modifier = Modifier.padding(top = 20.dp)
+            )
+            PmOutlineButton(
+                text = "Download another version",
+                onClick = onAnother,
+                modifier = Modifier.padding(top = 10.dp)
+            )
         }
     }
-}
-
-@Composable
-private fun DlNote(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(vertical = 18.dp)
-    )
-}
-
-@Composable
-private fun DlSection(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 18.dp, bottom = 2.dp)
-    )
 }
 
 @Composable
 private fun DlOption(target: SaveTarget, size: String, selected: Boolean, onClick: () -> Unit) {
     Row(
         Modifier
+            .padding(top = 8.dp)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .pmChoice(selected, onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        RadioButton(
-            selected = selected,
-            onClick = null,
-            colors = RadioButtonDefaults.colors(selectedColor = Accent),
-            modifier = Modifier.padding(horizontal = 8.dp)
-        )
-        Column(Modifier.weight(1f).padding(start = 6.dp)) {
-            Text(target.label, style = MaterialTheme.typography.titleSmall)
+        Column(Modifier.weight(1f)) {
             Text(
-                "${target.detail.ifBlank { target.format }}  ·  $size",
+                target.label,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold
+            )
+            Text(
+                target.detail.ifBlank { target.format },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp)
             )
         }
+        Text(
+            size,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 12.dp, end = 14.dp)
+        )
+        PmCheck(selected)
     }
 }
