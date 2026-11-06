@@ -138,6 +138,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private var feedJob: Job? = null
     private var suggestJob: Job? = null
+    private var lastSubmitted = ""
     private var searchJob: Job? = null
     private var playJob: Job? = null
     private var historyJob: Job? = null
@@ -499,6 +500,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         editing = true
     }
 
+    /** Leaves the typing view and goes back to the results that were showing, with the words that made them. */
+    fun stopEditing() {
+        editing = false
+        suggestions = emptyList()
+        suggestJob?.cancel()
+        if (lastSubmitted.isNotEmpty()) query = lastSubmitted
+    }
+
     fun submit(text: String = query) {
         val q = text.trim()
         if (q.isEmpty()) return
@@ -507,6 +516,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         query = q
+        lastSubmitted = q
         editing = false
         suggestions = emptyList()
         tab = Tab.Search
@@ -519,6 +529,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         searchJob = viewModelScope.launch {
             results = attempt { YouTubeRepo.search(q) }
                 .fold({ Load.Ready(it) }, { Load.Failed(friendly(it)) })
+            // The saved search shows the picture of its top result, like YouTube's search history.
+            val done = results
+            if (done is Load.Ready) {
+                done.data.items.firstOrNull { it.thumb != null }?.let {
+                    recentStore.setThumb(q, it.thumb)
+                    recents = recentStore.all()
+                }
+            }
         }
     }
 
