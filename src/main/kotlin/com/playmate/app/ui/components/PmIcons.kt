@@ -81,4 +81,18 @@ object PmIcons {
             "M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5h-7l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5z"
         )
     }
+
+    /**
+     * Headphones with a sound wave between the cups: listen only, no picture. The button that turns
+     * the video into the cassette player.
+     */
+    val AudioMode: ImageVector by lazy {
+        line(
+            "PmAudioMode",
+            "M4 14.5V12a8 8 0 0 1 16 0v2.5",
+            "M4 14.5h2.4a1.1 1.1 0 0 1 1.1 1.1v3.3a1.1 1.1 0 0 1-1.1 1.1h-.8A1.6 1.6 0 0 1 4 18.4z",
+            "M20 14.5h-2.4a1.1 1.1 0 0 0-1.1 1.1v3.3a1.1 1.1 0 0 0 1.1 1.1h.8a1.6 1.6 0 0 0 1.6-1.6z",
+            "M10.2 15.2v2.6M12 12.8v7M13.8 14.4v3.4"
+        )
+    }
 }
