@@ -2,6 +2,7 @@ package com.playmate.app.ui.player
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -196,29 +198,31 @@ fun ChannelRow(vm: AppViewModel, info: PlayableInfo?, meta: WatchMeta?, seedChan
     }
 }
 
-private val BarShape = RoundedCornerShape(18.dp)
-private val SlotShape = RoundedCornerShape(14.dp)
-private val BarHeight = 52.dp
+private val TileShape = RoundedCornerShape(14.dp)
+private val TileHeight = 44.dp
 private val GlyphSize = 24.dp
 
 /**
- * One place in the action bar. It has no label, so it carries its name another way: TalkBack reads
+ * One tile in the action row. It has no label, so it carries its name another way: TalkBack reads
  * [label], and a long press shows it as a toast, the way Android's own toolbars name their icons.
  * [lit] is the switched-on look (the text colour as the fill, the page colour as the glyph);
- * [state] is what a screen reader says about a toggle.
+ * [state] is what a screen reader says about a toggle. [flat] drops the tile's own fill and shape
+ * for a slot that sits inside a joined group (like and dislike).
  */
 @Composable
 private fun RowScope.BarSlot(
     label: String,
     weight: Float = 1f,
     lit: Boolean = false,
+    flat: Boolean = false,
     state: String? = null,
     onClick: () -> Unit,
     content: @Composable () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
+    val rest = if (flat) scheme.onSurface.copy(alpha = 0f) else Tonal.fill()
     val container by animateColorAsState(
-        targetValue = if (lit) scheme.onSurface else scheme.onSurface.copy(alpha = 0f),
+        targetValue = if (lit) scheme.onSurface else rest,
         animationSpec = tween(180),
         label = "slotContainer"
     )
@@ -229,10 +233,9 @@ private fun RowScope.BarSlot(
     Box(
         Modifier
             .weight(weight)
-            .fillMaxHeight()
-            .padding(horizontal = 1.dp, vertical = 4.dp)
+            .then(if (flat) Modifier.fillMaxHeight() else Modifier.height(TileHeight))
             .tonalPress(
-                shape = SlotShape,
+                shape = if (flat) RectangleShape else TileShape,
                 color = container,
                 onLongClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -256,12 +259,12 @@ private fun SlotGlyph(icon: ImageVector) {
 }
 
 /**
- * Like and dislike side by side with a small hairline between them. Liked / disliked shows the
- * YouTube way: the thumb is an outline when off and a solid shape when on, and the like thumb
+ * Like and dislike as one joined tile with a small hairline between them. Liked / disliked shows
+ * the YouTube way: the thumb is an outline when off and a solid shape when on, and the like thumb
  * throws a few rays and the count rolls when it is turned on.
  */
 @Composable
-private fun RowScope.ReactionSlots(
+private fun RowScope.ReactionTile(
     reaction: Reaction,
     likeCount: String?,
     onLike: () -> Unit,
@@ -271,46 +274,57 @@ private fun RowScope.ReactionSlots(
     val disliked = reaction == Reaction.Disliked
     val haptic = LocalHapticFeedback.current
 
-    BarSlot(
-        label = "Like",
-        weight = 1.9f,
-        state = if (liked) "Liked" else null,
-        onClick = {
-            if (!liked) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            onLike()
-        }
+    Row(
+        Modifier
+            .weight(2.3f)
+            .height(TileHeight)
+            .clip(TileShape)
+            .background(Tonal.fill()),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            AnimatedThumb(
-                on = liked,
-                outline = PmIcons.ThumbUp,
-                solid = PmIcons.ThumbUpSolid,
-                size = GlyphSize,
-                reach = 7.dp
-            )
-            likeCount?.let {
-                RollingCount(
-                    it,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = LocalContentColor.current,
-                    modifier = Modifier.padding(start = 6.dp)
+        BarSlot(
+            label = "Like",
+            weight = 1.35f,
+            flat = true,
+            state = if (liked) "Liked" else null,
+            onClick = {
+                if (!liked) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onLike()
+            }
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AnimatedThumb(
+                    on = liked,
+                    outline = PmIcons.ThumbUp,
+                    solid = PmIcons.ThumbUpSolid,
+                    size = GlyphSize,
+                    reach = 7.dp
                 )
+                likeCount?.let {
+                    RollingCount(
+                        it,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = LocalContentColor.current,
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
+                }
             }
         }
-    }
-    Box(Modifier.width(1.dp).height(20.dp).background(Tonal.hairline()))
-    BarSlot(
-        label = "Dislike",
-        state = if (disliked) "Disliked" else null,
-        onClick = onDislike
-    ) {
-        AnimatedThumb(
-            on = disliked,
-            outline = PmIcons.ThumbDown,
-            solid = PmIcons.ThumbDownSolid,
-            size = GlyphSize,
-            rays = false
-        )
+        Box(Modifier.width(1.dp).height(20.dp).background(Tonal.hairline()))
+        BarSlot(
+            label = "Dislike",
+            flat = true,
+            state = if (disliked) "Disliked" else null,
+            onClick = onDislike
+        ) {
+            AnimatedThumb(
+                on = disliked,
+                outline = PmIcons.ThumbDown,
+                solid = PmIcons.ThumbDownSolid,
+                size = GlyphSize,
+                rays = false
+            )
+        }
     }
 }
 
@@ -348,13 +362,13 @@ private fun RowScope.DownloadSlot(info: PlayableInfo?, onClick: () -> Unit) {
 }
 
 /**
- * The bar under a video, in the order people reach for it: Like and dislike, Share, Download,
+ * The row under a video, in the order people reach for it: Like and dislike, Share, Download,
  * Background play, Save, Save to phone. Comments are not here: they sit right below.
  *
- * All six live in one soft tonal bar that fits the width, so nothing scrolls away and nothing is
- * cut off. There are no labels: each glyph is drawn to be told apart on its own (Download is an
- * arrow onto a line, Save to phone is an arrow into a phone), and each says its name to a screen
- * reader and on a long press. The one toggle, Background play, fills in when it is on.
+ * Six separate soft tiles with a gap between them, spread over the width so nothing scrolls away
+ * and nothing is cut off. There are no labels: each glyph is drawn to be told apart on its own
+ * (Download is an arrow onto a line, Save to phone is an arrow into a phone), and each says its
+ * name to a screen reader and on a long press. The one toggle, Background play, fills in when on.
  */
 @Composable
 fun ActionRow(
@@ -376,14 +390,11 @@ fun ActionRow(
         Row(
             Modifier
                 .padding(horizontal = 16.dp, vertical = 10.dp)
-                .fillMaxWidth()
-                .height(BarHeight)
-                .clip(BarShape)
-                .background(Tonal.fill())
-                .padding(horizontal = 3.dp),
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ReactionSlots(
+            ReactionTile(
                 reaction = reaction,
                 likeCount = meta?.likeCount,
                 onLike = { vm.react(Reaction.Liked) },
