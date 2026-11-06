@@ -86,6 +86,18 @@ import com.playmate.app.data.activeDownload
 import com.playmate.app.ui.components.SubscribeButton
 import com.playmate.app.ui.theme.Accent
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import com.playmate.app.ui.theme.LocalPmDark
+import com.playmate.app.ui.theme.Tonal
+import com.playmate.app.ui.theme.tonalPress
 
 private val Hashtag = Regex("#[\\p{L}\\p{N}_]+")
 
@@ -119,7 +131,7 @@ fun TitleBlock(
     ) {
         Text(
             title,
-            style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, lineHeight = 24.sp),
+            style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, lineHeight = 25.sp),
             maxLines = if (expanded) Int.MAX_VALUE else 2,
             overflow = TextOverflow.Ellipsis
         )
@@ -162,9 +174,8 @@ fun TitleBlock(
             Modifier
                 .padding(horizontal = 12.dp, vertical = 6.dp)
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(scheme.surfaceContainer)
-                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(14.dp))
+                .background(Tonal.fill())
                 .clickable(onClick = onToggle)
                 .padding(16.dp)
         ) {
@@ -175,7 +186,7 @@ fun TitleBlock(
                     ago?.let { it to "Uploaded" }
                 )
                 stats.forEachIndexed { i, (value, label) ->
-                    if (i > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outlineVariant))
+                    if (i > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(Tonal.hairline()))
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             value,
@@ -192,7 +203,7 @@ fun TitleBlock(
                     }
                 }
             }
-            Box(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(1.dp).background(scheme.outlineVariant))
+            Box(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(1.dp).background(Tonal.hairline()))
             Text(description, style = MaterialTheme.typography.bodyMedium)
             Text(
                 "Show less",
@@ -228,10 +239,9 @@ fun ChannelRow(vm: AppViewModel, info: PlayableInfo?, meta: WatchMeta?, seedChan
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                    .background(Tonal.fill())
             )
             Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp)) {
                 Text(
@@ -250,48 +260,136 @@ fun ChannelRow(vm: AppViewModel, info: PlayableInfo?, meta: WatchMeta?, seedChan
                 }
             }
         }
-        if (subscribed) {
-            Icon(
-                Icons.Rounded.NotificationsNone,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(end = 10.dp).size(22.dp)
-            )
-        }
         SubscribeButton(subscribed = subscribed, onClick = { vm.toggleSubscribe(channelId, subscribed) })
     }
 }
 
-@Composable
-private fun Pill(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
-    Row(
-        modifier
-            .height(36.dp)
-            .clip(RoundedCornerShape(50))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-        verticalAlignment = Alignment.CenterVertically,
-        content = content
-    )
-}
+private val PillShape = RoundedCornerShape(50)
+private val PillHeight = 36.dp
+private val PillIcon = 20.dp
 
+/**
+ * The one shape every chip under the video is made from: a 36dp soft pill, an icon, a label.
+ * Switched on (liked, downloaded, background play) it takes a light wash of the accent colour.
+ */
 @Composable
-private fun ActionChip(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
-    Pill {
-        Row(
-            Modifier.fillMaxHeight().clickable(onClick = onClick).padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                icon,
-                contentDescription = label,
-                tint = if (active) Accent else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(18.dp)
-            )
+private fun PillBase(
+    active: Boolean,
+    label: String?,
+    onClick: () -> Unit,
+    leading: @Composable () -> Unit
+) {
+    val dark = LocalPmDark.current
+    val container = if (active) Tonal.accentFill(dark) else Tonal.fill()
+    val content = if (active) Accent else MaterialTheme.colorScheme.onSurface
+    Row(
+        Modifier
+            .height(PillHeight)
+            .tonalPress(PillShape, container, onClick = onClick)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        leading()
+        if (label != null) {
             Text(
                 label,
                 style = MaterialTheme.typography.labelLarge,
-                color = if (active) Accent else MaterialTheme.colorScheme.onSurface,
+                color = content,
+                maxLines = 1,
                 modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActionChip(
+    icon: ImageVector,
+    label: String,
+    active: Boolean = false,
+    description: String? = null,
+    onClick: () -> Unit
+) {
+    val content = if (active) Accent else MaterialTheme.colorScheme.onSurface
+    PillBase(active = active, label = label, onClick = onClick) {
+        Icon(icon, contentDescription = description, tint = content, modifier = Modifier.size(PillIcon))
+    }
+}
+
+/** Like and dislike in one joined pill, with a small hairline between them. */
+@Composable
+private fun ReactionPill(
+    reaction: Reaction,
+    likeCount: String?,
+    onLike: () -> Unit,
+    onDislike: () -> Unit
+) {
+    val plain = MaterialTheme.colorScheme.onSurface
+    val liked = reaction == Reaction.Liked
+    val disliked = reaction == Reaction.Disliked
+    val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val pop = remember { Animatable(1f) }
+
+    Row(
+        Modifier
+            .height(PillHeight)
+            .clip(PillShape)
+            .background(Tonal.fill()),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            Modifier
+                .fillMaxHeight()
+                .clickable(role = Role.Button, onClickLabel = "Like") {
+                    if (!liked) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        scope.launch {
+                            pop.snapTo(0.7f)
+                            pop.animateTo(
+                                1f,
+                                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+                            )
+                        }
+                    }
+                    onLike()
+                }
+                .padding(start = 14.dp, end = if (likeCount != null) 14.dp else 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                if (liked) Icons.Rounded.ThumbUp else Icons.Rounded.ThumbUpOffAlt,
+                contentDescription = "Like",
+                tint = if (liked) Accent else plain,
+                modifier = Modifier
+                    .size(PillIcon)
+                    .graphicsLayer {
+                        scaleX = pop.value
+                        scaleY = pop.value
+                    }
+            )
+            likeCount?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (liked) Accent else plain,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+        }
+        Box(Modifier.width(1.dp).height(20.dp).background(Tonal.hairline()))
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .clickable(role = Role.Button, onClickLabel = "Dislike") { onDislike() }
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
+                contentDescription = "Dislike",
+                tint = if (disliked) Accent else plain,
+                modifier = Modifier.size(PillIcon)
             )
         }
     }
@@ -315,43 +413,36 @@ private fun DownloadChip(info: PlayableInfo?, onClick: () -> Unit) {
         saved -> "Downloaded"
         else -> "Download"
     }
-    val highlight = active != null || saved
-    Pill {
-        Row(
-            Modifier.fillMaxHeight().clickable(onClick = onClick).padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            when {
-                active != null -> CircularProgressIndicator(
-                    progress = { percent / 100f },
-                    color = Accent,
-                    trackColor = MaterialTheme.colorScheme.outline,
-                    strokeWidth = 2.5.dp,
-                    modifier = Modifier.size(18.dp)
-                )
-                saved -> Icon(
-                    Icons.Rounded.DownloadDone,
-                    contentDescription = "Downloaded",
-                    tint = Accent,
-                    modifier = Modifier.size(18.dp)
-                )
-                else -> Icon(
-                    Icons.Rounded.Download,
-                    contentDescription = "Download",
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            Text(
-                label,
-                style = MaterialTheme.typography.labelLarge,
-                color = if (highlight) Accent else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(start = 8.dp)
+    PillBase(active = active != null || saved, label = label, onClick = onClick) {
+        when {
+            active != null -> CircularProgressIndicator(
+                progress = { percent / 100f },
+                color = Accent,
+                trackColor = Accent.copy(alpha = 0.25f),
+                strokeWidth = 2.5.dp,
+                modifier = Modifier.size(18.dp)
+            )
+            saved -> Icon(
+                Icons.Rounded.DownloadDone,
+                contentDescription = null,
+                tint = Accent,
+                modifier = Modifier.size(PillIcon)
+            )
+            else -> Icon(
+                Icons.Rounded.Download,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(PillIcon)
             )
         }
     }
 }
 
-/** Like / dislike, Comments, Share, Background play, Download, Save to phone, Save: the row under a video. */
+/**
+ * The row under a video, in the order people reach for it: Like and dislike, Share, Download,
+ * Background play, Save, Save to phone, Comments. It slides sideways; every chip is the same
+ * soft 36dp pill, so nothing shouts and nothing is left out.
+ */
 @Composable
 fun ActionRow(
     vm: AppViewModel,
@@ -361,7 +452,6 @@ fun ActionRow(
     onSave: () -> Unit
 ) {
     val reaction = meta?.reaction ?: Reaction.None
-    val plain = MaterialTheme.colorScheme.onSurface
     val info = (vm.playing?.info as? Load.Ready)?.data
     var phoneOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -372,64 +462,18 @@ fun ActionRow(
 
     Column {
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item {
-                Pill {
-                    Row(
-                        Modifier
-                            .fillMaxHeight()
-                            .clickable { vm.react(Reaction.Liked) }
-                            .padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            if (reaction == Reaction.Liked) Icons.Rounded.ThumbUp else Icons.Rounded.ThumbUpOffAlt,
-                            contentDescription = "Like",
-                            tint = if (reaction == Reaction.Liked) Accent else plain,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        meta?.likeCount?.let {
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.labelLarge,
-                                modifier = Modifier.padding(start = 8.dp)
-                            )
-                        }
-                    }
-                    Box(Modifier.width(1.dp).height(18.dp).background(MaterialTheme.colorScheme.outline))
-                    Box(
-                        Modifier
-                            .fillMaxHeight()
-                            .clickable { vm.react(Reaction.Disliked) }
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            if (reaction == Reaction.Disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
-                            contentDescription = "Dislike",
-                            tint = if (reaction == Reaction.Disliked) Accent else plain,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-            item {
-                ActionChip(Icons.Rounded.ChatBubbleOutline, vm.commentsTotal ?: meta?.commentCount ?: "Comments", onClick = onComments)
+                ReactionPill(
+                    reaction = reaction,
+                    likeCount = meta?.likeCount,
+                    onLike = { vm.react(Reaction.Liked) },
+                    onDislike = { vm.react(Reaction.Disliked) }
+                )
             }
             item { ActionChip(Icons.Rounded.Share, "Share", onClick = onShare) }
-            item {
-                ActionChip(Icons.Rounded.Headphones, "Background play", active = background) {
-                    background = !background
-                    PlaybackPrefs.setBackground(context, background)
-                    Toast.makeText(
-                        context,
-                        if (background) "Background play on" else "Background play off",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }
             item {
                 DownloadChip(info) {
                     if (info == null) {
@@ -442,8 +486,27 @@ fun ActionRow(
                     }
                 }
             }
-            item { ActionChip(Icons.Rounded.SaveAlt, "Save to phone") { if (info != null) phoneOpen = true } }
+            item {
+                ActionChip(Icons.Rounded.Headphones, "Background play", active = background) {
+                    background = !background
+                    PlaybackPrefs.setBackground(context, background)
+                    Toast.makeText(
+                        context,
+                        if (background) "Background play on" else "Background play off",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
             item { ActionChip(Icons.Rounded.BookmarkBorder, "Save", onClick = onSave) }
+            item { ActionChip(Icons.Rounded.SaveAlt, "Save to phone") { if (info != null) phoneOpen = true } }
+            item {
+                ActionChip(
+                    Icons.Rounded.ChatBubbleOutline,
+                    vm.commentsTotal ?: meta?.commentCount ?: "Comments",
+                    description = "Comments",
+                    onClick = onComments
+                )
+            }
         }
 
         if (phoneOpen && info != null) {
@@ -477,9 +540,8 @@ fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick
         Modifier
             .padding(horizontal = 12.dp, vertical = 8.dp)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(scheme.surfaceContainer)
-            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(14.dp))
+            .background(Tonal.fill())
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
@@ -510,7 +572,7 @@ fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick
                     modifier = Modifier
                         .size(26.dp)
                         .clip(CircleShape)
-                        .background(scheme.surfaceVariant)
+                        .background(Tonal.fillStrong())
                 )
                 Text(
                     preview.text,
@@ -532,7 +594,7 @@ fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick
                     .fillMaxWidth(0.7f)
                     .height(12.dp)
                     .clip(RoundedCornerShape(6.dp))
-                    .background(scheme.surfaceVariant)
+                    .background(Tonal.fillStrong())
             )
         }
     }
