@@ -103,8 +103,34 @@ import com.playmate.app.ui.theme.Accent
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import androidx.media3.common.C
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.BrightnessMedium
+import androidx.compose.material.icons.rounded.VolumeOff
+import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.font.FontWeight
+import com.playmate.app.ui.theme.Tonal
 
 private val Speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+
+/** "1x", "0.75x", "2x": no stray ".0". */
+private fun speedLabel(value: Float): String = value.toString().removeSuffix(".0") + "x"
+
+/** What the little feedback on the picture shows right now. */
+private sealed interface Hud {
+    /** A jump after a double tap; [seconds] adds up while the taps keep coming. */
+    data class Seek(val forward: Boolean, val seconds: Int) : Hud
+
+    /** Brightness (left half) or volume (right half) while a finger slides. */
+    data class Level(val brightness: Boolean, val percent: Int) : Hud
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -135,9 +161,10 @@ fun PlayerScreen(
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
     var fallbacks by remember { mutableIntStateOf(0) }
-    var hudText by remember { mutableStateOf<String?>(null) }
-    var hudSide by remember { mutableStateOf(Alignment.Center) }
+    var hud by remember { mutableStateOf<Hud?>(null) }
     var hudTick by remember { mutableIntStateOf(0) }
+    var buffered by remember { mutableLongStateOf(0L) }
+    var ended by remember { mutableStateOf(false) }
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
 
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
@@ -153,9 +180,8 @@ fun PlayerScreen(
         mutableFloatStateOf(if (current >= 0f) current else system)
     }
 
-    fun showHud(text: String, side: Alignment) {
-        hudText = text
-        hudSide = side
+    fun showHud(next: Hud) {
+        hud = next
         hudTick++
     }
 
@@ -164,6 +190,17 @@ fun PlayerScreen(
         val limit = if (player.duration > 0) player.duration else Long.MAX_VALUE
         player.seekTo((player.currentPosition + deltaMs).coerceIn(0L, limit))
     }
+
+    // Double tap jumps 10 s; while the feedback is still showing, single taps keep jumping (as on YouTube).
+    val skip: (Boolean) -> Unit = { forward ->
+        if (info?.live != true) {
+            seekBy(if (forward) 10_000L else -10_000L)
+            val before = hud as? Hud.Seek
+            val total = if (before != null && before.forward == forward) before.seconds + 10 else 10
+            showHud(Hud.Seek(forward, total))
+        }
+    }
+    val latestSkip by rememberUpdatedState(skip)
 
     val switchQuality: (Int) -> Unit = { index ->
         val current = info
@@ -262,6 +299,7 @@ fun PlayerScreen(
 
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == Player.STATE_BUFFERING
+                ended = state == Player.STATE_ENDED
                 if (player.duration > 0) duration = player.duration
                 if (state == Player.STATE_ENDED) controls = true
             }
@@ -339,8 +377,9 @@ fun PlayerScreen(
     LaunchedEffect(player) {
         while (true) {
             if (!dragging) position = player.currentPosition
+            buffered = player.bufferedPosition
             if (player.duration > 0) duration = player.duration
-            delay(400)
+            delay(250)
         }
     }
 
@@ -352,9 +391,9 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(hudTick) {
-        if (hudText != null) {
-            delay(750)
-            hudText = null
+        if (hud != null) {
+            delay(if (hud is Hud.Seek) 900L else 750L)
+            hud = null
         }
     }
 
@@ -432,21 +471,18 @@ fun PlayerScreen(
                     )
                 }
 
+                // Touch layer: tap shows or hides the controls, double tap jumps, sliding changes brightness or volume.
                 Box(
                     Modifier
                         .fillMaxSize()
                         .pointerInput(live) {
                             detectTapGestures(
-                                onTap = { controls = !controls },
+                                onTap = { offset ->
+                                    if (!live && hud is Hud.Seek) latestSkip(offset.x > size.width / 2f)
+                                    else controls = !controls
+                                },
                                 onDoubleTap = { offset ->
-                                    if (!live) {
-                                        val forward = offset.x > size.width / 2f
-                                        seekBy(if (forward) 10_000 else -10_000)
-                                        showHud(
-                                            if (forward) "+10 s" else "-10 s",
-                                            if (forward) Alignment.CenterEnd else Alignment.CenterStart
-                                        )
-                                    }
+                                    if (!live) latestSkip(offset.x > size.width / 2f)
                                 }
                             )
                         }
@@ -463,7 +499,7 @@ fun PlayerScreen(
                                             attrs.screenBrightness = brightness
                                             it.window.attributes = attrs
                                         }
-                                        showHud("Brightness ${(brightness * 100).roundToInt()}%", Alignment.CenterStart)
+                                        showHud(Hud.Level(brightness = true, percent = (brightness * 100).roundToInt()))
                                     } else {
                                         volume = (volume + step).coerceIn(0f, 1f)
                                         audioManager.setStreamVolume(
@@ -471,68 +507,129 @@ fun PlayerScreen(
                                             (volume * maxVolume).roundToInt(),
                                             0
                                         )
-                                        showHud("Volume ${(volume * 100).roundToInt()}%", Alignment.CenterEnd)
+                                        showHud(Hud.Level(brightness = false, percent = (volume * 100).roundToInt()))
                                     }
                                 }
                             )
                         }
                 )
 
-                hudText?.let {
-                    Box(Modifier.fillMaxSize().padding(horizontal = 28.dp), contentAlignment = hudSide) {
-                        Text(
-                            it,
-                            color = Color.White,
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(Color.Black.copy(alpha = 0.6f))
-                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                when (val feedback = hud) {
+                    is Hud.Seek -> Box(
+                        Modifier.fillMaxSize().padding(horizontal = 40.dp),
+                        contentAlignment = if (feedback.forward) Alignment.CenterEnd else Alignment.CenterStart
+                    ) {
+                        SeekFeedback(forward = feedback.forward, seconds = feedback.seconds)
+                    }
+
+                    is Hud.Level -> Box(
+                        Modifier.fillMaxSize().padding(horizontal = 28.dp),
+                        contentAlignment = if (feedback.brightness) Alignment.CenterStart else Alignment.CenterEnd
+                    ) {
+                        LevelFeedback(
+                            icon = when {
+                                feedback.brightness -> Icons.Rounded.BrightnessMedium
+                                feedback.percent == 0 -> Icons.Rounded.VolumeOff
+                                else -> Icons.Rounded.VolumeUp
+                            },
+                            percent = feedback.percent
                         )
                     }
+
+                    null -> Unit
+                }
+
+                // The fractions the seek bar and the thin bottom line are drawn from.
+                val playedFraction = when {
+                    live -> 1f
+                    duration > 0 -> (if (dragging) dragValue else position / duration.toFloat()).coerceIn(0f, 1f)
+                    else -> 0f
+                }
+                val loadedFraction = when {
+                    live -> 1f
+                    duration > 0 -> (buffered / duration.toFloat()).coerceIn(0f, 1f)
+                    else -> 0f
+                }
+
+                // Controls hidden: only a hairline of progress stays at the bottom edge.
+                this@Column.AnimatedVisibility(
+                    visible = !controls && playbackError == null && !live && duration > 0,
+                    enter = fadeIn(tween(200)),
+                    exit = fadeOut(tween(200)),
+                    modifier = Modifier.align(Alignment.BottomStart)
+                ) {
+                    MiniProgressLine(progress = playedFraction, buffered = loadedFraction)
                 }
 
                 this@Column.AnimatedVisibility(
-                    visible = controls || playbackError != null,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
+                    visible = controls || playbackError != null || dragging,
+                    enter = fadeIn(tween(160)),
+                    exit = fadeOut(tween(220)),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.38f))) {
+                    // In landscape, keep the controls clear of a camera cut-out.
+                    val safe = if (fullscreen) {
+                        Modifier.windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+                    } else {
+                        Modifier
+                    }
+                    val sidePad = if (fullscreen) 16.dp else 4.dp
+
+                    Box(Modifier.fillMaxSize()) {
+                        // A light veil for the centre button, and a soft shade at top and bottom for the white controls.
+                        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.26f)))
+                        Box(
+                            Modifier
+                                .align(Alignment.TopStart)
+                                .fillMaxWidth()
+                                .height(96.dp)
+                                .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)))
+                        )
+                        Box(
+                            Modifier
+                                .align(Alignment.BottomStart)
+                                .fillMaxWidth()
+                                .height(132.dp)
+                                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.68f))))
+                        )
+
+                        // Top: minimise (or leave fullscreen), the title in fullscreen, settings.
                         Row(
-                            Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = 4.dp),
+                            Modifier
+                                .align(Alignment.TopStart)
+                                .fillMaxWidth()
+                                .then(safe)
+                                .padding(horizontal = sidePad, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(onClick = { if (fullscreen) toggleFullscreen() else onClose() }) {
-                                Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "Close", tint = Color.White)
-                            }
+                            OverlayIconButton(
+                                icon = Icons.Rounded.KeyboardArrowDown,
+                                description = if (fullscreen) "Exit fullscreen" else "Minimise",
+                                onClick = { if (fullscreen) toggleFullscreen() else onClose() }
+                            )
                             Text(
                                 if (fullscreen) title else "",
                                 color = Color.White,
                                 style = MaterialTheme.typography.titleSmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
                             )
                             if (info != null) {
-                                IconButton(onClick = { settingsOpen = true }) {
-                                    Icon(Icons.Rounded.Settings, contentDescription = "Settings", tint = Color.White)
-                                }
+                                OverlayIconButton(
+                                    icon = Icons.Rounded.Settings,
+                                    description = "Settings",
+                                    onClick = { settingsOpen = true }
+                                )
                             }
                         }
 
+                        // Centre: the error, the scrub time, the spinner, or the one big button.
                         Box(Modifier.align(Alignment.Center)) {
                             when {
-                                playbackError != null -> Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.padding(24.dp)
-                                ) {
-                                    Text(
-                                        playbackError ?: "",
-                                        color = Color.White,
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                    TextButton(onClick = {
+                                playbackError != null -> PlaybackErrorPanel(
+                                    message = playbackError ?: "",
+                                    onRetry = {
                                         playbackError = null
                                         fallbacks = 0
                                         if (player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) {
@@ -540,8 +637,10 @@ fun PlayerScreen(
                                         } else {
                                             onRetry()
                                         }
-                                    }) { Text("Retry", color = Accent) }
-                                }
+                                    }
+                                )
+
+                                dragging -> ScrubTime((dragValue * duration).toLong())
 
                                 buffering || playing.info is Load.Loading -> CircularProgressIndicator(
                                     color = Color.White,
@@ -549,80 +648,65 @@ fun PlayerScreen(
                                     modifier = Modifier.size(44.dp)
                                 )
 
-                                info != null -> Box(
-                                    Modifier
-                                        .size(60.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.Black.copy(alpha = 0.45f))
-                                        .clickable {
-                                            if (isPlaying) player.pause() else {
-                                                if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
-                                                player.play()
-                                            }
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                        contentDescription = if (isPlaying) "Pause" else "Play",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(34.dp)
-                                    )
-                                }
+                                info != null -> CenterPlayButton(
+                                    action = when {
+                                        ended -> CenterAction.Replay
+                                        isPlaying -> CenterAction.Pause
+                                        else -> CenterAction.Play
+                                    },
+                                    onClick = {
+                                        if (isPlaying) player.pause() else {
+                                            if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+                                            player.play()
+                                        }
+                                    }
+                                )
                             }
                         }
 
-                        Row(
+                        // Bottom: the time (or LIVE) and fullscreen, and under them the seek bar.
+                        Column(
                             Modifier
                                 .align(Alignment.BottomStart)
                                 .fillMaxWidth()
-                                .padding(start = 14.dp, end = 4.dp, bottom = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .then(safe)
+                                .padding(horizontal = sidePad)
+                                .padding(bottom = if (fullscreen) 8.dp else 0.dp)
                         ) {
-                            if (live) {
-                                Text(
-                                    "LIVE",
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(5.dp))
-                                        .background(Accent)
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
+                            Row(
+                                Modifier.fillMaxWidth().padding(start = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (live) {
+                                    LiveBadge()
+                                } else {
+                                    val shownMs = if (dragging) (dragValue * duration).toLong() else position
+                                    TimeLabel(position = shownMs, duration = duration)
+                                }
                                 Spacer(Modifier.weight(1f))
-                            } else {
-                                val shown = if (dragging) (dragValue * duration).toLong() else position
-                                Text(
-                                    "${formatClock(shown)} / ${formatClock(duration)}",
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                                Slider(
-                                    value = if (duration > 0) (if (dragging) dragValue else position / duration.toFloat()).coerceIn(0f, 1f) else 0f,
-                                    onValueChange = {
-                                        dragging = true
-                                        dragValue = it
-                                    },
-                                    onValueChangeFinished = {
-                                        player.seekTo((dragValue * duration).toLong())
-                                        position = (dragValue * duration).toLong()
-                                        dragging = false
-                                    },
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = Accent,
-                                        activeTrackColor = Accent,
-                                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                                    ),
-                                    modifier = Modifier.weight(1f).padding(horizontal = 6.dp)
+                                OverlayIconButton(
+                                    icon = if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                                    description = if (fullscreen) "Exit fullscreen" else "Fullscreen",
+                                    onClick = { toggleFullscreen() }
                                 )
                             }
-                            IconButton(onClick = ::toggleFullscreen) {
-                                Icon(
-                                    if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
-                                    contentDescription = "Fullscreen",
-                                    tint = Color.White
-                                )
-                            }
+                            PmSeekBar(
+                                progress = playedFraction,
+                                buffered = loadedFraction,
+                                scrubbing = dragging,
+                                enabled = !live && duration > 0,
+                                onScrubStart = {
+                                    dragging = true
+                                    dragValue = it
+                                },
+                                onScrub = { dragValue = it },
+                                onScrubEnd = { value ->
+                                    val target = (value * duration).toLong()
+                                    player.seekTo(target)
+                                    position = target
+                                    dragging = false
+                                }
+                            )
                         }
                     }
                 }
@@ -644,18 +728,21 @@ fun PlayerScreen(
     }
 
     if (settingsOpen && info != null) {
+        val scheme = MaterialTheme.colorScheme
         ModalBottomSheet(
             onDismissRequest = { settingsOpen = false },
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            containerColor = scheme.surfaceContainerHigh
         ) {
-            Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
+            Column(
+                Modifier
+                    .navigationBarsPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 16.dp)
+            ) {
                 if (!info.live && info.qualities.isNotEmpty()) {
-                    Text(
-                        "Quality",
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                    )
+                    SheetHeading("Quality")
                     info.qualities.forEachIndexed { index, quality ->
+                        val selected = index == qualityIndex
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -663,41 +750,58 @@ fun PlayerScreen(
                                     switchQuality(index)
                                     settingsOpen = false
                                 }
-                                .padding(horizontal = 20.dp, vertical = 13.dp),
+                                .padding(horizontal = 20.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(quality.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                            if (index == qualityIndex) {
-                                Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Text(
+                                quality.label,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (selected) {
+                                Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = scheme.primary)
                             }
                         }
                     }
+                    Box(
+                        Modifier
+                            .padding(horizontal = 20.dp, vertical = 8.dp)
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(Tonal.hairline())
+                    )
                 }
-                Text(
-                    "Speed",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                )
+
+                SheetHeading("Playback speed")
+                // One soft track with the chosen speed lifted out of it.
                 Row(
-                    Modifier.padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Modifier
+                        .padding(horizontal = 16.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(50))
+                        .background(Tonal.fill())
+                        .padding(4.dp)
                 ) {
                     Speeds.forEach { value ->
                         val selected = value == speed
                         Box(
                             Modifier
+                                .weight(1f)
                                 .clip(RoundedCornerShape(50))
-                                .background(if (selected) Accent else MaterialTheme.colorScheme.surfaceVariant)
+                                .background(if (selected) scheme.onSurface else Color.Transparent)
                                 .clickable {
                                     speed = value
                                     player.setPlaybackSpeed(value)
                                 }
-                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .padding(vertical = 9.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                if (value == 1f) "1x" else "${value}x",
-                                color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface,
-                                style = MaterialTheme.typography.labelLarge
+                                speedLabel(value),
+                                color = if (selected) scheme.surface else scheme.onSurface,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1
                             )
                         }
                     }
@@ -708,6 +812,16 @@ fun PlayerScreen(
 
     if (commentsOpen) CommentsSheet(vm = vm, onDismiss = { commentsOpen = false })
     if (saveOpen) SaveSheet(vm = vm, onDismiss = { saveOpen = false })
+}
+
+@Composable
+private fun SheetHeading(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 8.dp)
+    )
 }
 
 @Composable
