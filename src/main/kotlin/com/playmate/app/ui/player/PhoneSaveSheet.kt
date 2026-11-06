@@ -24,7 +24,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ExpandLess
@@ -33,7 +32,6 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -41,6 +39,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -56,7 +55,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -78,7 +76,6 @@ import com.playmate.app.data.safeFileName
 import com.playmate.app.data.saveTargetsFor
 import com.playmate.app.data.sizeIsApproximate
 import com.playmate.app.ui.components.formatClock
-import com.playmate.app.ui.theme.Accent
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -158,7 +155,9 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        shape = PmSheetShape,
+        dragHandle = { PmDragHandle() }
     ) {
         Column(Modifier.navigationBarsPadding()) {
             Column(
@@ -171,9 +170,9 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                 Row(verticalAlignment = Alignment.Top) {
                     Box(
                         Modifier
-                            .width(132.dp)
+                            .width(128.dp)
                             .aspectRatio(16f / 9f)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         AsyncImage(
@@ -189,24 +188,26 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
-                                    .padding(6.dp)
-                                    .clip(RoundedCornerShape(5.dp))
-                                    .background(Color.Black.copy(alpha = 0.7f))
+                                    .padding(5.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color.Black.copy(alpha = 0.75f))
                                     .padding(horizontal = 5.dp, vertical = 2.dp)
                             )
                         }
                     }
                     Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                        PmCaps("Save to phone")
                         Text(
                             name,
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = 3,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 6.dp)
                         )
                         Row(
                             Modifier
                                 .padding(top = 6.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(6.dp))
                                 .clickable { renaming = true }
                                 .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -214,13 +215,12 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                             Icon(
                                 Icons.Rounded.Edit,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Text(
                                 "Rename",
                                 style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(start = 6.dp)
                             )
                         }
@@ -230,35 +230,36 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                 // Where it goes.
                 Column(
                     Modifier
-                        .padding(top = 16.dp)
+                        .padding(top = 20.dp)
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clip(RoundedCornerShape(PmRadius))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(PmRadius))
                         .padding(14.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.FolderOpen, contentDescription = null, tint = Accent)
-                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                            Text(
-                                "Saving to",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Icon(
+                            Icons.Rounded.FolderOpen,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp)) {
+                            PmCaps("Saving to")
                             Text(
                                 place,
                                 style = MaterialTheme.typography.titleSmall,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 2.dp)
                             )
                         }
-                        TextButton(onClick = { pickFolder.launch(null) }) { Text("Change") }
+                        PmSmallButton("Change") { pickFolder.launch(null) }
                     }
                     if (capacity > 0) {
                         LinearProgressIndicator(
                             progress = { ((capacity - free).toFloat() / capacity).coerceIn(0f, 1f) },
-                            color = Accent,
-                            trackColor = MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.padding(top = 8.dp).fillMaxWidth()
+                            color = MaterialTheme.colorScheme.onBackground,
+                            trackColor = MaterialTheme.colorScheme.outlineVariant,
+                            modifier = Modifier.padding(top = 14.dp).fillMaxWidth().height(3.dp)
                         )
                         Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -271,9 +272,9 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                                 Text(
                                     "Use default",
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
+                                        .clip(RoundedCornerShape(6.dp))
                                         .clickable {
                                             SaveFolder.reset(context)
                                             folderTick++
@@ -286,34 +287,27 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                 }
 
                 // Video or audio.
-                Row(
-                    Modifier
-                        .padding(top = 18.dp)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(50))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(4.dp)
-                ) {
-                    Segment("Video", Icons.Rounded.Videocam, !audioTab, Modifier.weight(1f)) {
-                        audioTab = false
+                PmSegmented(
+                    labels = listOf("Video", "Audio"),
+                    icons = listOf(Icons.Rounded.Videocam, Icons.Rounded.MusicNote),
+                    selectedIndex = if (audioTab) 1 else 0,
+                    onSelect = { index ->
+                        audioTab = index == 1
                         picked = null
-                    }
-                    Segment("Audio", Icons.Rounded.MusicNote, audioTab, Modifier.weight(1f)) {
-                        audioTab = true
-                        picked = null
-                    }
-                }
+                    },
+                    modifier = Modifier.padding(top = 20.dp)
+                )
 
                 when {
-                    info.live -> Note("Live streams can't be saved.")
-                    list.isEmpty() -> Note(
+                    info.live -> PmNote("Live streams can't be saved.")
+                    list.isEmpty() -> PmNote(
                         "No ${if (audioTab) "audio" else "video"} files were found for this video."
                     )
                     else -> {
                         val groups: Map<String, List<SaveTarget>> =
                             if (audioTab) visible.groupBy { audioGroup(it) } else mapOf("" to visible)
                         groups.forEach { (title, items) ->
-                            if (title.isNotEmpty()) SectionLabel(title)
+                            if (title.isNotEmpty()) PmSectionLabel(title)
                             items.chunked(2).forEach { pair ->
                                 Row(
                                     Modifier.padding(top = 10.dp).fillMaxWidth(),
@@ -335,39 +329,44 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                         if (extra > 0) {
                             Row(
                                 Modifier
-                                    .padding(top = 12.dp)
+                                    .padding(top = 16.dp)
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(PmRadius))
                                     .clickable {
                                         more = !more
                                         // Folding the extras away must not leave one of them quietly selected.
                                         if (!more) picked = picked?.takeIf { it.primary }
                                     }
-                                    .padding(horizontal = 4.dp, vertical = 10.dp),
+                                    .padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     if (more) "Fewer formats" else "More formats  ·  $extra",
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.weight(1f)
                                 )
                                 Icon(
                                     if (more) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                         }
                         if (audioTab && !ffmpegReady) {
-                            Note("MP3, FLAC and WAV aren't available on this phone right now.")
+                            PmNote("MP3, FLAC and WAV aren't available on this phone right now.")
                         }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(16.dp))
             }
 
-            Button(
+            PmHairline()
+            PmPrimaryButton(
+                text = if (shown != null) "Save ${shown.label}  ·  ${sizeOf(shown)}" else "Save",
+                icon = Icons.Rounded.Download,
+                enabled = shown != null && !info.live,
+                modifier = Modifier.padding(horizontal = 20.dp).padding(top = 12.dp, bottom = 16.dp),
                 onClick = {
                     val choice = shown
                     if (choice != null) {
@@ -389,44 +388,47 @@ fun PhoneSaveSheet(info: PlayableInfo, onDismiss: () -> Unit) {
                         ).show()
                         onDismiss()
                     }
-                },
-                enabled = shown != null && !info.live,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Color.White),
-                modifier = Modifier
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-                    .fillMaxWidth()
-                    .height(54.dp)
-            ) {
-                Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(22.dp))
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    if (shown != null) "Save ${shown.label}  ·  ${sizeOf(shown)}" else "Save",
-                    style = MaterialTheme.typography.titleSmall
-                )
-            }
+                }
+            )
         }
     }
 
     if (renaming) {
         var draft by remember { mutableStateOf(name) }
+        val ink = MaterialTheme.colorScheme.onBackground
         AlertDialog(
             onDismissRequest = { renaming = false },
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            shape = RoundedCornerShape(14.dp),
             title = { Text("Rename") },
             text = {
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
-                    singleLine = true
+                    singleLine = true,
+                    shape = RoundedCornerShape(PmRadius),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = ink,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                        cursorColor = ink
+                    )
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    name = safeFileName(draft)
-                    renaming = false
-                }) { Text("Done") }
+                TextButton(
+                    onClick = {
+                        name = safeFileName(draft)
+                        renaming = false
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = ink)
+                ) { Text("Done", fontWeight = FontWeight.Bold) }
             },
-            dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } }
+            dismissButton = {
+                TextButton(
+                    onClick = { renaming = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
+                ) { Text("Cancel") }
+            }
         )
     }
 }
@@ -439,54 +441,6 @@ private fun audioGroup(target: SaveTarget): String = when (target.audioFormat) {
 }
 
 @Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 18.dp)
-    )
-}
-
-@Composable
-private fun Note(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(vertical = 18.dp)
-    )
-}
-
-@Composable
-private fun Segment(
-    label: String,
-    icon: ImageVector,
-    selected: Boolean,
-    modifier: Modifier,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier
-            .clip(RoundedCornerShape(50))
-            .background(if (selected) Accent else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        val tint = if (selected) Color.White else MaterialTheme.colorScheme.onSurface
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            color = tint,
-            modifier = Modifier.padding(start = 8.dp)
-        )
-    }
-}
-
-@Composable
 private fun OptionCard(
     modifier: Modifier,
     target: SaveTarget,
@@ -494,29 +448,19 @@ private fun OptionCard(
     selected: Boolean,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(16.dp)
     Column(
         modifier
-            .clip(shape)
-            .background(if (selected) Accent.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant)
-            .border(1.5.dp, if (selected) Accent else Color.Transparent, shape)
-            .clickable(onClick = onClick)
+            .pmChoice(selected, onClick)
             .padding(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 target.label,
                 style = MaterialTheme.typography.titleMedium,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
                 modifier = Modifier.weight(1f)
             )
-            if (selected) {
-                Icon(
-                    Icons.Rounded.Check,
-                    contentDescription = null,
-                    tint = Accent,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
+            PmCheck(selected)
         }
         Text(
             target.detail.ifBlank { target.format },
@@ -530,8 +474,7 @@ private fun OptionCard(
             size,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
-            color = if (selected) Accent else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(top = 6.dp)
+            modifier = Modifier.padding(top = 8.dp)
         )
     }
 }
