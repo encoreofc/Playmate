@@ -1,7 +1,7 @@
 package com.playmate.app.ui.player
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -43,7 +44,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.SolidColor
@@ -98,6 +102,9 @@ import androidx.compose.ui.semantics.stateDescription
 import com.playmate.app.ui.components.PmIcons
 import com.playmate.app.ui.theme.Tonal
 import com.playmate.app.ui.theme.tonalPress
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Title and the quiet line under it (views and a short age like "7y ago"), with the like /
@@ -168,7 +175,8 @@ fun TitleBlock(
 
 /**
  * Channel avatar, name, subscribers and the subscribe button. Tapping the channel opens it.
- * [verified] puts the round tick after the name; it stays off until the caller passes the flag.
+ * [badge] puts the channel's badge after the name (the round seal for a verified channel, the
+ * music note for an official artist channel); [ChannelBadge.None] shows nothing.
  */
 @Composable
 fun ChannelRow(
@@ -176,7 +184,7 @@ fun ChannelRow(
     info: PlayableInfo?,
     meta: WatchMeta?,
     seedChannel: String,
-    verified: Boolean = false
+    badge: ChannelBadge = ChannelBadge.None
 ) {
     val channelId = meta?.channelId ?: info?.channelId
     val name = meta?.channelName ?: info?.channel?.takeIf { it.isNotBlank() } ?: seedChannel
@@ -219,9 +227,9 @@ fun ChannelRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-                    if (verified) {
-                        Spacer(Modifier.width(px(14)))
-                        VerifiedBadge()
+                    if (badge != ChannelBadge.None) {
+                        Spacer(Modifier.width(px(16)))
+                        BadgeMark(badge)
                     }
                 }
                 meta?.subscribers?.let {
@@ -242,23 +250,84 @@ fun ChannelRow(
     }
 }
 
-/** The round tick after a verified channel's name. */
+/** The badge a channel carries next to its name. */
+enum class ChannelBadge {
+    None, Verified, Artist;
+
+    companion object {
+        /**
+         * Reads a badge from the style text YouTube sends with a channel (for example
+         * BADGE_STYLE_TYPE_VERIFIED or BADGE_STYLE_TYPE_VERIFIED_ARTIST). When a channel carries
+         * several, the artist one wins. Anything it does not know shows as a verified seal, since
+         * a badge was sent at all.
+         */
+        fun fromStyles(styles: List<String?>): ChannelBadge {
+            val clean = styles.filterNotNull().filter { it.isNotBlank() }
+            if (clean.isEmpty()) return None
+            return if (clean.any { it.contains("ARTIST", ignoreCase = true) }) Artist else Verified
+        }
+    }
+}
+
+/** The mark itself: a wavy-edged seal with a tick, or a round disc with a music note. */
 @Composable
-private fun VerifiedBadge() {
+private fun BadgeMark(badge: ChannelBadge) {
     val scheme = MaterialTheme.colorScheme
-    Box(
-        Modifier
-            .size(px(28))
-            .clip(CircleShape)
-            .background(scheme.onSurface),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            ActionIcons.Check,
-            contentDescription = "Verified",
-            tint = scheme.surface,
-            modifier = Modifier.size(px(28))
-        )
+    val size = px(28)
+    when (badge) {
+        ChannelBadge.None -> Unit
+        ChannelBadge.Verified -> {
+            val seal = scheme.onSurface
+            val mark = scheme.surface
+            Canvas(
+                Modifier
+                    .size(size)
+                    .semantics { contentDescription = "Verified" }
+            ) {
+                val c = Offset(this.size.width / 2f, this.size.height / 2f)
+                val r = this.size.width / 2f
+                val path = Path()
+                val steps = 160
+                for (i in 0..steps) {
+                    val a = (2.0 * PI * i / steps).toFloat()
+                    val rr = r * (0.92f + 0.08f * cos(8f * a))
+                    val x = c.x + rr * cos(a)
+                    val y = c.y + rr * sin(a)
+                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                path.close()
+                drawPath(path, seal)
+                val tick = Path().apply {
+                    moveTo(c.x - r * 0.34f, c.y + r * 0.02f)
+                    lineTo(c.x - r * 0.08f, c.y + r * 0.28f)
+                    lineTo(c.x + r * 0.38f, c.y - r * 0.24f)
+                }
+                drawPath(
+                    tick,
+                    mark,
+                    style = Stroke(
+                        width = r * 0.2f,
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round
+                    )
+                )
+            }
+        }
+        ChannelBadge.Artist -> Box(
+            Modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(scheme.onSurfaceVariant)
+                .semantics { contentDescription = "Official artist channel" },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                ActionIcons.Note,
+                contentDescription = null,
+                tint = scheme.surface,
+                modifier = Modifier.size(size)
+            )
+        }
     }
 }
 
@@ -281,8 +350,8 @@ private fun px(v: Int): Dp {
 @Composable
 private fun pxSp(v: Int): TextUnit = with(LocalDensity.current) { px(v).toSp() }
 
-/** The green of the Play Audio glyph. */
-private val AudioGreen = Color(0xFF63C174)
+/** The light green of the Play Audio glyph (when it is on) and of the Autoplay switch. */
+private val AccentGreen = Color(0xFF98D89A)
 
 /**
  * The icons of the row under the video: thin round-ended outlines on a 24 grid, drawn at three
@@ -315,23 +384,23 @@ private object ActionIcons {
     val Save: ImageVector by lazy {
         thin(
             "ThinSave", LINE,
-            "M7.5 5.25h9a1.5 1.5 0 0 1 1.5 1.5v12l-6-4-6 4v-12a1.5 1.5 0 0 1 1.5-1.5z"
+            "M8.2 5.25h7.6a1.2 1.2 0 0 1 1.2 1.2v12.3l-5-3.2-5 3.2V6.45a1.2 1.2 0 0 1 1.2-1.2z"
         )
     }
     val Popup: ImageVector by lazy {
         thin(
             "ThinPopup", LINE,
-            "M13.5 6H8.5A2.5 2.5 0 0 0 6 8.5v7A2.5 2.5 0 0 0 8.5 18h7a2.5 2.5 0 0 0 2.5-2.5v-5",
-            "M11.5 12.5l7-7",
-            "M14.5 5.5h4v4"
+            "M12 7.7H8a1.8 1.8 0 0 0-1.8 1.8v6.1a1.8 1.8 0 0 0 1.8 1.8h7.5a1.8 1.8 0 0 0 1.8-1.8V12.7",
+            "M13.3 10.9L18 6.3",
+            "M13.7 6.3H18v4.2"
         )
     }
     val Headphones: ImageVector by lazy {
         thin(
             "ThinHeadphones", LINE,
-            "M4.2 12.8V12a7.8 7.8 0 0 1 15.6 0v.8",
-            "M4.2 12.8h2.4a1 1 0 0 1 1 1v3.4a1 1 0 0 1-1 1H5.2a1 1 0 0 1-1-1z",
-            "M19.8 12.8h-2.4a1 1 0 0 0-1 1v3.4a1 1 0 0 0 1 1h1.4a1 1 0 0 0 1-1z"
+            "M5.05 12.9v-.5a7.05 7.05 0 0 1 14.1 0v.5",
+            "M5.85 13.3h1.1a1.4 1.4 0 0 1 1.4 1.4v2.5a1.4 1.4 0 0 1-1.4 1.4h-1.1a1.4 1.4 0 0 1-1.4-1.4v-2.5a1.4 1.4 0 0 1 1.4-1.4z",
+            "M17.15 13.3h1.1a1.4 1.4 0 0 1 1.4 1.4v2.5a1.4 1.4 0 0 1-1.4 1.4h-1.1a1.4 1.4 0 0 1-1.4-1.4v-2.5a1.4 1.4 0 0 1 1.4-1.4z"
         )
     }
     val Download: ImageVector by lazy {
@@ -343,8 +412,20 @@ private object ActionIcons {
     val Phone: ImageVector by lazy {
         thin(
             "ThinPhone", LINE,
-            "M8.4 4h7.2a1.8 1.8 0 0 1 1.8 1.8v12.4a1.8 1.8 0 0 1-1.8 1.8H8.4a1.8 1.8 0 0 1-1.8-1.8V5.8A1.8 1.8 0 0 1 8.4 4z",
-            "M12 17.4h.01"
+            "M8.95 4.7h6.1a1.7 1.7 0 0 1 1.7 1.7v11.2a1.7 1.7 0 0 1-1.7 1.7h-6.1a1.7 1.7 0 0 1-1.7-1.7V6.4a1.7 1.7 0 0 1 1.7-1.7z",
+            "M9.8 6.4h4.4",
+            "M12 5.4v1",
+            "M8.3 17.2h1.8",
+            "M13.7 17.2h1.8",
+            "M12 16.3l.8.9-.8.9-.8-.9z"
+        )
+    }
+    val Note: ImageVector by lazy {
+        thin(
+            "ThinNote", 1.9f,
+            "M11.6 15.9a1.9 1.9 0 1 1-3.8 0 1.9 1.9 0 0 1 3.8 0z",
+            "M11.6 15.9V7.6",
+            "M11.6 7.6c1.7.1 3.2.9 3.4 2.9"
         )
     }
     val Check: ImageVector by lazy {
@@ -356,16 +437,15 @@ private object ActionIcons {
  * One button of the row under the video: a thin glyph with its name printed under it, no tile
  * behind it. Pressed, a round grey patch fades in behind the glyph and the glyph shrinks a
  * little. [label] is what a screen reader says; [text] is what is printed (it may wrap to a
- * second line). [accent] colours the glyph; [lit] is the switched-on look (a disc of the accent,
- * or of the text colour, behind the glyph, the page colour as the glyph); [state] is what a
- * screen reader says about a toggle.
+ * second line). [lit] is the switched-on look: the glyph takes the colour [litColor] (nothing
+ * else changes, no disc behind it); [state] is what a screen reader says about a toggle.
  */
 @Composable
 private fun RowScope.ActionTile(
     label: String,
     text: String,
     lit: Boolean = false,
-    accent: Color? = null,
+    litColor: Color? = null,
     state: String? = null,
     onClick: () -> Unit,
     glyph: @Composable () -> Unit
@@ -383,13 +463,11 @@ private fun RowScope.ActionTile(
         animationSpec = tween(120),
         label = "tileSqueeze"
     )
-    val discColor = accent ?: scheme.onSurface
-    val disc by animateColorAsState(
-        targetValue = if (lit) discColor else discColor.copy(alpha = 0f),
+    val tint by animateColorAsState(
+        targetValue = if (lit && litColor != null) litColor else scheme.onSurface,
         animationSpec = tween(180),
-        label = "tileDisc"
+        label = "tileTint"
     )
-    val tint = if (lit) scheme.surface else (accent ?: scheme.onSurface)
 
     Column(
         Modifier
@@ -416,8 +494,7 @@ private fun RowScope.ActionTile(
                         scaleX = squeeze
                         scaleY = squeeze
                     }
-                    .clip(CircleShape)
-                    .background(disc),
+                    .clip(CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 CompositionLocalProvider(LocalContentColor provides tint) { glyph() }
@@ -587,8 +664,8 @@ private fun RowScope.DownloadTile(info: PlayableInfo?, onClick: () -> Unit) {
  * this row.) [onShare] is no longer used by this row; sharing is not one of its buttons.
  *
  * Five equal columns spread over the width, each a thin glyph with its name under it, and a thin
- * line under the whole row. Play Audio is the one toggle (it is the background-play switch) and
- * puts a green disc behind its glyph when on. Popup is only drawn for now: it does nothing yet.
+ * line under the whole row. Play Audio is the one toggle (it is the background-play switch): it
+ * looks like the others until it is switched on, then its glyph turns light green. Popup is only drawn for now: it does nothing yet.
  */
 @Composable
 fun ActionRow(
@@ -625,7 +702,7 @@ fun ActionRow(
                 label = "Play audio",
                 text = "Play Audio",
                 lit = background,
-                accent = AudioGreen,
+                litColor = AccentGreen,
                 state = if (background) "On" else "Off",
                 onClick = {
                     background = !background
@@ -689,14 +766,12 @@ fun ActionRow(
 @Composable
 fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(px(30))
     Column(
         Modifier
-            .padding(start = px(36), end = px(36), top = px(23), bottom = px(24))
+            .padding(start = px(36), end = px(36), top = px(23), bottom = px(37))
             .fillMaxWidth()
-            .clip(shape)
+            .clip(RoundedCornerShape(px(30)))
             .background(Tonal.fill())
-            .border(px(2), Tonal.hairline(), shape)
             .clickable(onClick = onClick)
             .padding(start = px(31), end = px(31), top = px(18), bottom = px(22))
     ) {
@@ -761,6 +836,106 @@ fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick
                     .background(Tonal.fillStrong())
             )
         }
+    }
+}
+
+/**
+ * The "Up next" heading with the Autoplay switch at its right end, in the place of the plain
+ * heading above the related videos. The switch is drawn and moves, but it is not connected to
+ * anything yet: [onAutoplayChange] is where the real setting goes later.
+ */
+@Composable
+fun UpNextHeader(
+    initial: Boolean = true,
+    onAutoplayChange: (Boolean) -> Unit = {}
+) {
+    val scheme = MaterialTheme.colorScheme
+    var on by remember { mutableStateOf(initial) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = px(36))
+            .padding(bottom = px(24)),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "Up next",
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontSize = pxSp(36),
+                lineHeight = pxSp(46),
+                fontWeight = FontWeight.Bold
+            ),
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            "Autoplay",
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontSize = pxSp(28),
+                lineHeight = pxSp(36)
+            ),
+            color = scheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(px(27)))
+        AutoplaySwitch(on = on) {
+            on = it
+            onAutoplayChange(it)
+        }
+    }
+}
+
+/**
+ * The Autoplay switch: a slim track with a bigger round thumb that sits at its end and spills a
+ * little over the track's top and bottom. On, the thumb is light green and the track a muted
+ * green; off, both go grey and the thumb slides to the start.
+ */
+@Composable
+private fun AutoplaySwitch(on: Boolean, onChange: (Boolean) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val progress by animateFloatAsState(
+        targetValue = if (on) 1f else 0f,
+        animationSpec = tween(180),
+        label = "autoplayThumb"
+    )
+    val track by animateColorAsState(
+        targetValue = if (on) AccentGreen.copy(alpha = 0.5f) else scheme.onSurface.copy(alpha = 0.22f),
+        animationSpec = tween(180),
+        label = "autoplayTrack"
+    )
+    val thumb by animateColorAsState(
+        targetValue = if (on) AccentGreen else scheme.onSurfaceVariant,
+        animationSpec = tween(180),
+        label = "autoplayThumbColor"
+    )
+    val trackWidth = px(78)
+    val thumbSize = px(46)
+
+    Box(
+        Modifier
+            .size(width = trackWidth, height = thumbSize)
+            .toggleable(
+                value = on,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Switch,
+                onValueChange = onChange
+            )
+            .semantics { contentDescription = "Autoplay" },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(px(35))
+                .clip(CircleShape)
+                .background(track)
+        )
+        Box(
+            Modifier
+                .offset(x = (trackWidth - thumbSize) * progress)
+                .size(thumbSize)
+                .clip(CircleShape)
+                .background(thumb)
+        )
     }
 }
 
