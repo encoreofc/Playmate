@@ -137,7 +137,7 @@ fun TitleBlock(
         Text(
             title,
             style = MaterialTheme.typography.titleLarge.copy(
-                fontSize = pxSp(40),
+                fontSize = pxSp(38),
                 lineHeight = pxSp(53),
                 fontWeight = FontWeight.Bold
             ),
@@ -367,7 +367,13 @@ object WatchColors {
     val Card = Color(0xFF232324)
 
     /** The thin line under the row of buttons. */
-    val Line = Color(0xFF1C1C1C)
+    val Line = Color(0xFF242424)
+
+    /** The thin line between the like and the dislike half of the pill. */
+    val Divider = Color(0xFF3C3C3C)
+
+    /** The like count inside the pill: a light grey, not white. */
+    val Count = Color(0xFFE8E8E8)
 
     /** The views line and the subscribers line: a clearly brighter grey than the app had. */
     val Quiet = Color(0xFFDADADA)
@@ -384,6 +390,14 @@ private fun cardFill(): Color = if (isDarkTheme()) WatchColors.Card else Tonal.f
 /** The thin line under the row of buttons. */
 @Composable
 private fun rowLine(): Color = if (isDarkTheme()) WatchColors.Line else Tonal.hairline()
+
+/** The thin line between the like and the dislike half of the pill. */
+@Composable
+private fun pillDivider(): Color = if (isDarkTheme()) WatchColors.Divider else Tonal.hairline()
+
+/** The like count inside the pill. */
+@Composable
+private fun countColor(): Color = if (isDarkTheme()) WatchColors.Count else LocalContentColor.current
 
 /** The quiet grey of the views line and the subscribers line. */
 @Composable
@@ -416,45 +430,45 @@ private object ActionIcons {
         return builder.build()
     }
 
-    private const val LINE = 1.25f
+    private const val LINE = 0.9f
 
     val Save: ImageVector by lazy {
         thin(
             "ThinSave", LINE,
-            "M8.2 5.25h7.6a1.2 1.2 0 0 1 1.2 1.2v12.3l-5-3.2-5 3.2V6.45a1.2 1.2 0 0 1 1.2-1.2z"
+            "M7.03 18.38V7.42A1.1 1.1 0 0 1 8.12 6.32H16.12A1.1 1.1 0 0 1 17.23 7.42V18.38L12.12 14.7Z"
         )
     }
     val Popup: ImageVector by lazy {
         thin(
             "ThinPopup", LINE,
-            "M12 7.7H8a1.8 1.8 0 0 0-1.8 1.8v6.1a1.8 1.8 0 0 0 1.8 1.8h7.5a1.8 1.8 0 0 0 1.8-1.8V12.7",
-            "M13.3 10.9L18 6.3",
-            "M13.7 6.3H18v4.2"
+            "M11.93 7.83H7.93A1.3 1.3 0 0 0 6.62 9.12V16.15A1.3 1.3 0 0 0 7.93 17.45H16.18A1.3 1.3 0 0 0 17.48 16.15V13.07",
+            "M13.9 10.83L18.15 6.47",
+            "M14.2 6.47H18.15V10.38"
         )
     }
     val Headphones: ImageVector by lazy {
         thin(
             "ThinHeadphones", LINE,
-            "M5.05 12.9v-.5a7.05 7.05 0 0 1 14.1 0v.5",
-            "M5.85 13.3h1.1a1.4 1.4 0 0 1 1.4 1.4v2.5a1.4 1.4 0 0 1-1.4 1.4h-1.1a1.4 1.4 0 0 1-1.4-1.4v-2.5a1.4 1.4 0 0 1 1.4-1.4z",
-            "M17.15 13.3h1.1a1.4 1.4 0 0 1 1.4 1.4v2.5a1.4 1.4 0 0 1-1.4 1.4h-1.1a1.4 1.4 0 0 1-1.4-1.4v-2.5a1.4 1.4 0 0 1 1.4-1.4z"
+            "M5.23 13.7V12.05A6.9 6.9 0 0 1 19.02 12.05V13.7",
+            "M4.83 14.22A0.95 0.95 0 0 1 5.78 13.28H7.03A0.95 0.95 0 0 1 7.98 14.22V17.35A0.95 0.95 0 0 1 7.03 18.3H5.78A0.95 0.95 0 0 1 4.83 17.35Z",
+            "M16.28 14.22A0.95 0.95 0 0 1 17.23 13.28H18.48A0.95 0.95 0 0 1 19.43 14.22V17.35A0.95 0.95 0 0 1 18.48 18.3H17.23A0.95 0.95 0 0 1 16.28 17.35Z"
         )
     }
     val Download: ImageVector by lazy {
-        thin("ThinDownload", LINE, "M12 5v10.2", "M7.8 11.2l4.2 4.2 4.2-4.2", "M6.2 19h11.6")
+        thin("ThinDownload", LINE, "M12.12 6.17V15.55", "M8.78 12.15L12.12 15.55L15.47 12.15", "M6.95 18.3H17.55")
     }
     val DownloadDone: ImageVector by lazy {
-        thin("ThinDownloadDone", LINE, "M7.8 11.5l3 3 5.4-5.6", "M6.2 19h11.6")
+        thin("ThinDownloadDone", LINE, "M8.8 12L11.9 15.1L16.3 10.5", "M6.95 18.3H17.55")
     }
     val Phone: ImageVector by lazy {
         thin(
             "ThinPhone", LINE,
-            "M8.95 4.7h6.1a1.7 1.7 0 0 1 1.7 1.7v11.2a1.7 1.7 0 0 1-1.7 1.7h-6.1a1.7 1.7 0 0 1-1.7-1.7V6.4a1.7 1.7 0 0 1 1.7-1.7z",
-            "M9.8 6.4h4.4",
-            "M12 5.4v1",
-            "M8.3 17.2h1.8",
-            "M13.7 17.2h1.8",
-            "M12 16.3l.8.9-.8.9-.8-.9z"
+            "M7.5 5.85A1.25 1.25 0 0 1 8.75 4.6H15.75A1.25 1.25 0 0 1 17 5.85V18.35A1.25 1.25 0 0 1 15.75 19.6H8.75A1.25 1.25 0 0 1 7.5 18.35Z",
+            "M10.25 6.53H14.25",
+            "M12.25 5.75V6.53",
+            "M9.03 17.35H10.25",
+            "M14.25 17.35H15.48",
+            "M12.25 16.7L12.85 17.35L12.25 18L11.65 17.35Z"
         )
     }
     val Note: ImageVector by lazy {
@@ -468,6 +482,42 @@ private object ActionIcons {
     val Check: ImageVector by lazy {
         thin("ThinCheck", 2.6f, "M7.4 12.3l3.1 3.1 6.1-6.3")
     }
+
+    /**
+     * The like and dislike thumbs, traced off the reference: a hand outline with a separate open
+     * cuff. Drawn on a 44-unit grid (one unit is one reference pixel, the glyph box of the pill).
+     * The solid ones (switched on) fill the hand and close the cuff.
+     */
+    private fun thumb(name: String, hand: String, cuff: String, solid: Boolean): ImageVector {
+        val builder = ImageVector.Builder(
+            name = name,
+            defaultWidth = 44.dp,
+            defaultHeight = 44.dp,
+            viewportWidth = 44f,
+            viewportHeight = 44f
+        )
+        listOf(hand, if (solid) cuff + "Z" else cuff).forEach { d ->
+            builder.addPath(
+                pathData = PathParser().parsePathString(d).toNodes(),
+                fill = if (solid) SolidColor(Color.Black) else null,
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2.6f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            )
+        }
+        return builder.build()
+    }
+
+    private const val UP_HAND = "M16.7 38.47A2.73 2.73 0 0 1 13.95 35.72L14.07 19.38A1.48 1.48 0 0 1 14.41 18.44L23.77 7.13A2.19 2.19 0 0 1 27.62 8.88L25.84 19.66A0.05 0.05 0 0 0 25.89 19.72L35.34 19.62A3.61 3.61 0 0 1 38.88 24.12L35.75 36.38A2.58 2.58 0 0 1 33.27 38.32Z"
+    private const val UP_CUFF = "M9.65 19.9L7.87 19.9A1.77 1.77 0 0 0 6.1 21.68L6.15 37.25A1.33 1.33 0 0 0 7.66 38.56L10.27 38.2"
+    private const val DOWN_HAND = "M29.3 6.53A2.73 2.73 0 0 1 32.05 9.28L31.93 25.62A1.48 1.48 0 0 1 31.59 26.56L22.23 37.87A2.19 2.19 0 0 1 18.38 36.12L20.16 25.34A0.05 0.05 0 0 0 20.11 25.28L10.66 25.38A3.61 3.61 0 0 1 7.12 20.88L10.25 8.62A2.58 2.58 0 0 1 12.73 6.68Z"
+    private const val DOWN_CUFF = "M36.35 25.1L38.13 25.1A1.77 1.77 0 0 0 39.9 23.32L39.85 7.75A1.33 1.33 0 0 0 38.34 6.44L35.73 6.8"
+
+    val ThumbUp: ImageVector by lazy { thumb("ThinThumbUp", UP_HAND, UP_CUFF, false) }
+    val ThumbUpSolid: ImageVector by lazy { thumb("ThinThumbUpSolid", UP_HAND, UP_CUFF, true) }
+    val ThumbDown: ImageVector by lazy { thumb("ThinThumbDown", DOWN_HAND, DOWN_CUFF, false) }
+    val ThumbDownSolid: ImageVector by lazy { thumb("ThinThumbDownSolid", DOWN_HAND, DOWN_CUFF, true) }
 }
 
 /**
@@ -610,8 +660,8 @@ private fun ReactionPill(
             CompositionLocalProvider(LocalContentColor provides scheme.onSurface) {
                 AnimatedThumb(
                     on = liked,
-                    outline = PmIcons.ThumbUp,
-                    solid = PmIcons.ThumbUpSolid,
+                    outline = ActionIcons.ThumbUp,
+                    solid = ActionIcons.ThumbUpSolid,
                     size = glyph,
                     reach = px(16)
                 )
@@ -619,10 +669,11 @@ private fun ReactionPill(
                     RollingCount(
                         it,
                         style = MaterialTheme.typography.labelLarge.copy(
-                            fontSize = pxSp(29),
-                            lineHeight = pxSp(36)
+                            fontSize = pxSp(31),
+                            lineHeight = pxSp(36),
+                            fontWeight = FontWeight.Normal
                         ),
-                        color = LocalContentColor.current,
+                        color = countColor(),
                         modifier = Modifier.padding(start = px(17))
                     )
                 }
@@ -631,8 +682,8 @@ private fun ReactionPill(
         Box(
             Modifier
                 .width(px(2))
-                .height(px(38))
-                .background(Tonal.hairline())
+                .height(px(41))
+                .background(pillDivider())
         )
         Box(
             Modifier
@@ -652,8 +703,8 @@ private fun ReactionPill(
             CompositionLocalProvider(LocalContentColor provides scheme.onSurface) {
                 AnimatedThumb(
                     on = disliked,
-                    outline = PmIcons.ThumbDown,
-                    solid = PmIcons.ThumbDownSolid,
+                    outline = ActionIcons.ThumbDown,
+                    solid = ActionIcons.ThumbDownSolid,
                     size = glyph,
                     rays = false
                 )
@@ -694,8 +745,8 @@ private fun RowScope.DownloadTile(info: PlayableInfo?, onClick: () -> Unit) {
                 strokeWidth = px(4),
                 modifier = Modifier.size(px(40))
             )
-            saved -> SlotGlyph(ActionIcons.DownloadDone, px(65))
-            else -> SlotGlyph(ActionIcons.Download, px(65))
+            saved -> SlotGlyph(ActionIcons.DownloadDone)
+            else -> SlotGlyph(ActionIcons.Download)
         }
     }
 }
@@ -733,7 +784,7 @@ fun ActionRow(
             verticalAlignment = Alignment.Top
         ) {
             ActionTile(label = "Save", text = "Save", onClick = onSave) {
-                SlotGlyph(ActionIcons.Save, px(65))
+                SlotGlyph(ActionIcons.Save)
             }
             ActionTile(
                 label = "Popup",
