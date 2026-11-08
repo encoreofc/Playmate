@@ -1,6 +1,7 @@
 package com.playmate.app.ui.player
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,8 +23,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import android.widget.Toast
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.UnfoldMore
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,14 +56,13 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextAlign
 import com.playmate.app.data.CommentItem
 import com.playmate.app.ui.components.agoText
 import com.playmate.app.ui.components.formatCount
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -105,6 +104,8 @@ import com.playmate.app.ui.theme.tonalPress
  * dislike pill at the right end of that line. Tapping the title or the line opens the description
  * panel under the player (see [DescriptionPanel]); [onOpen] is null while the video is loading,
  * and then there is no pill.
+ *
+ * The channel name is not printed in the quiet line any more: it lives in the channel row below.
  */
 @Composable
 fun TitleBlock(
@@ -123,28 +124,29 @@ fun TitleBlock(
         Modifier
             .fillMaxWidth()
             .clickable(enabled = onOpen != null, onClick = { onOpen?.invoke() })
-            .padding(horizontal = 16.dp)
-            .padding(top = 14.dp, bottom = 6.dp)
+            .padding(horizontal = px(36))
+            .padding(top = px(38))
     ) {
         Text(
             title,
-            style = MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, lineHeight = 25.sp),
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontSize = pxSp(40),
+                lineHeight = pxSp(53),
+                fontWeight = FontWeight.Bold
+            ),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        Spacer(Modifier.height(px(12)))
-        val line = buildAnnotatedString {
-            val parts = listOfNotNull(channel.takeIf { it.isNotBlank() }, viewsText, ago)
-            parts.forEachIndexed { i, part ->
-                if (i > 0) append("  ·  ")
-                if (part == viewsText) withStyle(SpanStyle(fontWeight = FontWeight.Medium, color = scheme.onSurface)) { append(part) }
-                else append(part)
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.offset(y = -px(3)),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
-                line,
-                style = MaterialTheme.typography.bodySmall,
+                listOfNotNull(viewsText, ago).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = pxSp(32),
+                    lineHeight = pxSp(40)
+                ),
                 color = scheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -164,22 +166,34 @@ fun TitleBlock(
     }
 }
 
-/** Channel avatar, name, subscribers and the subscribe button. Tapping the channel opens it. */
+/**
+ * Channel avatar, name, subscribers and the subscribe button. Tapping the channel opens it.
+ * [verified] puts the round tick after the name; it stays off until the caller passes the flag.
+ */
 @Composable
-fun ChannelRow(vm: AppViewModel, info: PlayableInfo?, meta: WatchMeta?, seedChannel: String) {
+fun ChannelRow(
+    vm: AppViewModel,
+    info: PlayableInfo?,
+    meta: WatchMeta?,
+    seedChannel: String,
+    verified: Boolean = false
+) {
     val channelId = meta?.channelId ?: info?.channelId
     val name = meta?.channelName ?: info?.channel?.takeIf { it.isNotBlank() } ?: seedChannel
     val avatar = meta?.channelAvatar ?: info?.channelAvatar
     val subscribed = channelId?.let { vm.subscriptions[it] } ?: meta?.subscribed ?: false
 
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = px(36))
+            .padding(top = px(36), bottom = px(37)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
             Modifier
                 .weight(1f)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(px(24)))
                 .clickable(enabled = channelId != null) { vm.openChannel(channelId, name, avatar) },
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -188,21 +202,36 @@ fun ChannelRow(vm: AppViewModel, info: PlayableInfo?, meta: WatchMeta?, seedChan
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(px(102))
                     .clip(CircleShape)
                     .background(Tonal.fill())
             )
-            Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp)) {
-                Text(
-                    name,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            Column(Modifier.weight(1f).padding(start = px(36), end = px(24))) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        name,
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontSize = pxSp(36),
+                            lineHeight = pxSp(44),
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (verified) {
+                        Spacer(Modifier.width(px(14)))
+                        VerifiedBadge()
+                    }
+                }
                 meta?.subscribers?.let {
+                    Spacer(Modifier.height(px(3)))
                     Text(
                         it,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = pxSp(28),
+                            lineHeight = pxSp(38)
+                        ),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
                     )
@@ -213,25 +242,55 @@ fun ChannelRow(vm: AppViewModel, info: PlayableInfo?, meta: WatchMeta?, seedChan
     }
 }
 
+/** The round tick after a verified channel's name. */
+@Composable
+private fun VerifiedBadge() {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        Modifier
+            .size(px(28))
+            .clip(CircleShape)
+            .background(scheme.onSurface),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            ActionIcons.Check,
+            contentDescription = "Verified",
+            tint = scheme.surface,
+            modifier = Modifier.size(px(28))
+        )
+    }
+}
+
 /**
- * Every size from here down is in screen pixels, taken straight off the reference screenshot
- * (a phone 720 pixels wide), so the pill and the buttons land at exactly the same size on this
- * phone. To make the whole look a little bigger or smaller, change [PX_SCALE].
+ * Every size from here down is measured off the reference screenshot (a phone 852 pixels wide)
+ * and then scaled to the width of the phone it runs on, so the title, the pill, the buttons and
+ * the cards keep exactly the same proportions on every screen. To make the whole look a little
+ * bigger or smaller, change [PX_SCALE].
  */
+private const val REF_WIDTH = 852f
 private const val PX_SCALE = 1f
 
 @Composable
-private fun px(v: Int): Dp = with(LocalDensity.current) { (v * PX_SCALE).toDp() }
+private fun px(v: Int): Dp {
+    val config = LocalConfiguration.current
+    val width = minOf(config.screenWidthDp, config.screenHeightDp)
+    return (v * PX_SCALE * width / REF_WIDTH).dp
+}
 
 @Composable
-private fun pxSp(v: Int): TextUnit = with(LocalDensity.current) { (v * PX_SCALE).toSp() }
+private fun pxSp(v: Int): TextUnit = with(LocalDensity.current) { px(v).toSp() }
+
+/** The green of the Play Audio glyph. */
+private val AudioGreen = Color(0xFF63C174)
 
 /**
- * The icons of the row under the video, same shapes as [PmIcons] but drawn with a thick line so
- * they read big and bold.
+ * The icons of the row under the video: thin round-ended outlines on a 24 grid, drawn at three
+ * screen pixels to the grid unit (the glyph box is 72 pixels), so each lands at the size it has
+ * in the reference.
  */
-private object BoldIcons {
-    private fun bold(name: String, vararg paths: String): ImageVector {
+private object ActionIcons {
+    private fun thin(name: String, width: Float, vararg paths: String): ImageVector {
         val builder = ImageVector.Builder(
             name = name,
             defaultWidth = 24.dp,
@@ -243,7 +302,7 @@ private object BoldIcons {
             builder.addPath(
                 pathData = PathParser().parsePathString(d).toNodes(),
                 stroke = SolidColor(Color.Black),
-                strokeLineWidth = 2.3f,
+                strokeLineWidth = width,
                 strokeLineCap = StrokeCap.Round,
                 strokeLineJoin = StrokeJoin.Round
             )
@@ -251,48 +310,62 @@ private object BoldIcons {
         return builder.build()
     }
 
-    val Share: ImageVector by lazy {
-        bold("BoldShare", "M14.3 4.8l6.2 6.1-6.2 6.1", "M20 10.9h-8.6a6.9 6.9 0 0 0-6.9 6.9v1.4")
+    private const val LINE = 1.25f
+
+    val Save: ImageVector by lazy {
+        thin(
+            "ThinSave", LINE,
+            "M7.5 5.25h9a1.5 1.5 0 0 1 1.5 1.5v12l-6-4-6 4v-12a1.5 1.5 0 0 1 1.5-1.5z"
+        )
     }
-    val Download: ImageVector by lazy {
-        bold("BoldDownload", "M12 4.2v10.6", "M7.4 10.4l4.6 4.6 4.6-4.6", "M5 19.6h14")
-    }
-    val DownloadDone: ImageVector by lazy {
-        bold("BoldDownloadDone", "M7.2 11.6l3.4 3.4 6.2-6.4", "M5 19.6h14")
+    val Popup: ImageVector by lazy {
+        thin(
+            "ThinPopup", LINE,
+            "M13.5 6H8.5A2.5 2.5 0 0 0 6 8.5v7A2.5 2.5 0 0 0 8.5 18h7a2.5 2.5 0 0 0 2.5-2.5v-5",
+            "M11.5 12.5l7-7",
+            "M14.5 5.5h4v4"
+        )
     }
     val Headphones: ImageVector by lazy {
-        bold(
-            "BoldHeadphones",
-            "M4 14.5V12a8 8 0 0 1 16 0v2.5",
-            "M4 14.5h2.4a1.1 1.1 0 0 1 1.1 1.1v3.3a1.1 1.1 0 0 1-1.1 1.1h-.8A1.6 1.6 0 0 1 4 18.4z",
-            "M20 14.5h-2.4a1.1 1.1 0 0 0-1.1 1.1v3.3a1.1 1.1 0 0 0 1.1 1.1h.8a1.6 1.6 0 0 0 1.6-1.6z"
+        thin(
+            "ThinHeadphones", LINE,
+            "M4.2 12.8V12a7.8 7.8 0 0 1 15.6 0v.8",
+            "M4.2 12.8h2.4a1 1 0 0 1 1 1v3.4a1 1 0 0 1-1 1H5.2a1 1 0 0 1-1-1z",
+            "M19.8 12.8h-2.4a1 1 0 0 0-1 1v3.4a1 1 0 0 0 1 1h1.4a1 1 0 0 0 1-1z"
         )
     }
-    val Bookmark: ImageVector by lazy {
-        bold("BoldBookmark", "M7.2 3.8h9.6a1.4 1.4 0 0 1 1.4 1.4v14.6l-6.2-4.3-6.2 4.3V5.2a1.4 1.4 0 0 1 1.4-1.4z")
+    val Download: ImageVector by lazy {
+        thin("ThinDownload", LINE, "M12 5v10.2", "M7.8 11.2l4.2 4.2 4.2-4.2", "M6.2 19h11.6")
     }
-    val PhoneSave: ImageVector by lazy {
-        bold(
-            "BoldPhoneSave",
-            "M8.2 2.8h7.6a1.8 1.8 0 0 1 1.8 1.8v14.8a1.8 1.8 0 0 1-1.8 1.8H8.2a1.8 1.8 0 0 1-1.8-1.8V4.6a1.8 1.8 0 0 1 1.8-1.8z",
-            "M12 7.6v6.2",
-            "M9.4 11.4l2.6 2.6 2.6-2.6"
+    val DownloadDone: ImageVector by lazy {
+        thin("ThinDownloadDone", LINE, "M7.8 11.5l3 3 5.4-5.6", "M6.2 19h11.6")
+    }
+    val Phone: ImageVector by lazy {
+        thin(
+            "ThinPhone", LINE,
+            "M8.4 4h7.2a1.8 1.8 0 0 1 1.8 1.8v12.4a1.8 1.8 0 0 1-1.8 1.8H8.4a1.8 1.8 0 0 1-1.8-1.8V5.8A1.8 1.8 0 0 1 8.4 4z",
+            "M12 17.4h.01"
         )
+    }
+    val Check: ImageVector by lazy {
+        thin("ThinCheck", 2.6f, "M7.4 12.3l3.1 3.1 6.1-6.3")
     }
 }
 
 /**
- * One button of the row under the video: a big bold glyph with its name printed under it, no tile
+ * One button of the row under the video: a thin glyph with its name printed under it, no tile
  * behind it. Pressed, a round grey patch fades in behind the glyph and the glyph shrinks a
- * little. [label] is what a screen reader says; [text] is what is printed. [lit] is the
- * switched-on look (a disc of the text colour behind the glyph, the page colour as the glyph);
- * [state] is what a screen reader says about a toggle.
+ * little. [label] is what a screen reader says; [text] is what is printed (it may wrap to a
+ * second line). [accent] colours the glyph; [lit] is the switched-on look (a disc of the accent,
+ * or of the text colour, behind the glyph, the page colour as the glyph); [state] is what a
+ * screen reader says about a toggle.
  */
 @Composable
 private fun RowScope.ActionTile(
     label: String,
     text: String,
     lit: Boolean = false,
+    accent: Color? = null,
     state: String? = null,
     onClick: () -> Unit,
     glyph: @Composable () -> Unit
@@ -310,12 +383,13 @@ private fun RowScope.ActionTile(
         animationSpec = tween(120),
         label = "tileSqueeze"
     )
+    val discColor = accent ?: scheme.onSurface
     val disc by animateColorAsState(
-        targetValue = if (lit) scheme.onSurface else scheme.onSurface.copy(alpha = 0f),
+        targetValue = if (lit) discColor else discColor.copy(alpha = 0f),
         animationSpec = tween(180),
         label = "tileDisc"
     )
-    val tint = if (lit) scheme.surface else scheme.onSurface
+    val tint = if (lit) scheme.surface else (accent ?: scheme.onSurface)
 
     Column(
         Modifier
@@ -349,16 +423,17 @@ private fun RowScope.ActionTile(
                 CompositionLocalProvider(LocalContentColor provides tint) { glyph() }
             }
         }
-        Spacer(Modifier.height(px(4)))
+        Spacer(Modifier.height(px(3)))
         Text(
             text,
             style = TextStyle(
-                fontSize = pxSp(22),
-                lineHeight = pxSp(26),
-                fontWeight = FontWeight.Normal
+                fontSize = pxSp(27),
+                lineHeight = pxSp(32),
+                fontWeight = FontWeight.Normal,
+                textAlign = TextAlign.Center
             ),
             color = scheme.onSurface,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
     }
@@ -386,11 +461,11 @@ private fun ReactionPill(
     val disliked = reaction == Reaction.Disliked
     val haptic = LocalHapticFeedback.current
     val scheme = MaterialTheme.colorScheme
-    val glyph = px(36)
+    val glyph = px(44)
 
     Row(
         Modifier
-            .height(px(56))
+            .height(px(75))
             .clip(CircleShape)
             .background(Tonal.fill()),
         verticalAlignment = Alignment.CenterVertically
@@ -406,7 +481,7 @@ private fun ReactionPill(
                         onLike()
                     }
                 )
-                .padding(horizontal = px(22))
+                .padding(start = px(24), end = px(25))
                 .semantics {
                     contentDescription = "Like"
                     if (liked) stateDescription = "Liked"
@@ -419,17 +494,17 @@ private fun ReactionPill(
                     outline = PmIcons.ThumbUp,
                     solid = PmIcons.ThumbUpSolid,
                     size = glyph,
-                    reach = px(14)
+                    reach = px(16)
                 )
                 likeCount?.let {
                     RollingCount(
                         it,
                         style = MaterialTheme.typography.labelLarge.copy(
-                            fontSize = pxSp(21),
-                            lineHeight = pxSp(26)
+                            fontSize = pxSp(29),
+                            lineHeight = pxSp(36)
                         ),
                         color = LocalContentColor.current,
-                        modifier = Modifier.padding(start = px(12))
+                        modifier = Modifier.padding(start = px(17))
                     )
                 }
             }
@@ -437,7 +512,7 @@ private fun ReactionPill(
         Box(
             Modifier
                 .width(px(2))
-                .height(px(34))
+                .height(px(38))
                 .background(Tonal.hairline())
         )
         Box(
@@ -448,7 +523,7 @@ private fun ReactionPill(
                     color = Color.Transparent,
                     onClick = onDislike
                 )
-                .padding(horizontal = px(22))
+                .padding(horizontal = px(23))
                 .semantics {
                     contentDescription = "Dislike"
                     if (disliked) stateDescription = "Disliked"
@@ -497,22 +572,23 @@ private fun RowScope.DownloadTile(info: PlayableInfo?, onClick: () -> Unit) {
                 progress = { percent / 100f },
                 color = LocalContentColor.current,
                 trackColor = LocalContentColor.current.copy(alpha = 0.25f),
-                strokeWidth = px(6),
-                modifier = Modifier.size(px(46))
+                strokeWidth = px(4),
+                modifier = Modifier.size(px(40))
             )
-            saved -> SlotGlyph(BoldIcons.DownloadDone)
-            else -> SlotGlyph(BoldIcons.Download)
+            saved -> SlotGlyph(ActionIcons.DownloadDone)
+            else -> SlotGlyph(ActionIcons.Download)
         }
     }
 }
 
 /**
- * The row under a video, in the order people reach for it: Share, Download, Background play,
- * Save, Save to phone. (Like and dislike sit in the pill at the end of the line under the title;
- * comments sit right below this row.)
+ * The row under a video, in this order: Save, Popup, Play Audio, Download, Save to phone. (Like
+ * and dislike sit in the pill at the end of the line under the title; comments sit right below
+ * this row.) [onShare] is no longer used by this row; sharing is not one of its buttons.
  *
- * Five equal columns spread over the width, each a big glyph with its name under it, and a thin
- * line under the whole row. The one toggle, Background play, puts a disc behind its glyph when on.
+ * Five equal columns spread over the width, each a thin glyph with its name under it, and a thin
+ * line under the whole row. Play Audio is the one toggle (it is the background-play switch) and
+ * puts a green disc behind its glyph when on. Popup is only drawn for now: it does nothing yet.
  */
 @Composable
 fun ActionRow(
@@ -533,11 +609,34 @@ fun ActionRow(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = px(32))
-                .padding(top = px(14), bottom = px(32)),
+                .padding(horizontal = px(16))
+                .padding(bottom = px(23)),
             verticalAlignment = Alignment.Top
         ) {
-            ActionTile(label = "Share", text = "Share", onClick = onShare) { SlotGlyph(BoldIcons.Share) }
+            ActionTile(label = "Save", text = "Save", onClick = onSave) { SlotGlyph(ActionIcons.Save) }
+            ActionTile(
+                label = "Popup",
+                text = "Popup",
+                onClick = {
+                    Toast.makeText(context, "Popup player is coming soon.", Toast.LENGTH_SHORT).show()
+                }
+            ) { SlotGlyph(ActionIcons.Popup) }
+            ActionTile(
+                label = "Play audio",
+                text = "Play Audio",
+                lit = background,
+                accent = AudioGreen,
+                state = if (background) "On" else "Off",
+                onClick = {
+                    background = !background
+                    PlaybackPrefs.setBackground(context, background)
+                    Toast.makeText(
+                        context,
+                        if (background) "Background play on" else "Background play off",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            ) { SlotGlyph(ActionIcons.Headphones) }
             DownloadTile(info) {
                 if (info == null) {
                     Toast.makeText(context, "This video is still loading.", Toast.LENGTH_SHORT).show()
@@ -549,33 +648,18 @@ fun ActionRow(
                 }
             }
             ActionTile(
-                label = "Background play",
-                text = "Background",
-                lit = background,
-                state = if (background) "On" else "Off",
-                onClick = {
-                    background = !background
-                    PlaybackPrefs.setBackground(context, background)
-                    Toast.makeText(
-                        context,
-                        if (background) "Background play on" else "Background play off",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            ) { SlotGlyph(BoldIcons.Headphones) }
-            ActionTile(label = "Save", text = "Save", onClick = onSave) { SlotGlyph(BoldIcons.Bookmark) }
-            ActionTile(
                 label = "Save to phone",
-                text = "To phone",
+                text = "Save to phone",
                 onClick = { if (info != null) phoneOpen = true }
-            ) { SlotGlyph(BoldIcons.PhoneSave) }
+            ) { SlotGlyph(ActionIcons.Phone) }
         }
 
         Box(
             Modifier
                 .fillMaxWidth()
+                .padding(horizontal = px(36))
                 .height(px(2))
-                .background(Tonal.fill())
+                .background(Tonal.hairline())
         )
 
         if (phoneOpen && info != null) {
@@ -605,64 +689,75 @@ fun ActionRow(
 @Composable
 fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(px(30))
     Column(
         Modifier
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(start = px(36), end = px(36), top = px(23), bottom = px(24))
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(shape)
             .background(Tonal.fill())
+            .border(px(2), Tonal.hairline(), shape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(start = px(31), end = px(31), top = px(18), bottom = px(22))
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Comments", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Comments",
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = pxSp(34),
+                    lineHeight = pxSp(42),
+                    fontWeight = FontWeight.SemiBold
+                )
+            )
             count?.let {
                 Text(
                     it,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = pxSp(30),
+                        lineHeight = pxSp(42)
+                    ),
                     color = scheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 8.dp)
+                    modifier = Modifier.padding(start = px(12))
                 )
             }
-            Box(Modifier.weight(1f))
-            Icon(
-                Icons.Rounded.UnfoldMore,
-                contentDescription = null,
-                tint = scheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
         }
         when {
-            preview != null -> Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.Top) {
+            preview != null -> Row(Modifier.padding(top = px(17)), verticalAlignment = Alignment.Top) {
                 AsyncImage(
                     model = preview.avatar,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(26.dp)
+                        .size(px(61))
                         .clip(CircleShape)
                         .background(Tonal.fillStrong())
                 )
                 Text(
                     preview.text,
-                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = pxSp(28),
+                        lineHeight = pxSp(40)
+                    ),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(start = 10.dp)
+                    modifier = Modifier.padding(start = px(29), top = px(10))
                 )
             }
             state is Load.Failed -> Text(
                 "Comments are turned off or unavailable",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = pxSp(28),
+                    lineHeight = pxSp(40)
+                ),
                 color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp)
+                modifier = Modifier.padding(top = px(17))
             )
             state == null || state is Load.Loading -> Box(
                 Modifier
-                    .padding(top = 12.dp)
+                    .padding(top = px(25))
                     .fillMaxWidth(0.7f)
-                    .height(12.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .height(px(26))
+                    .clip(RoundedCornerShape(px(13)))
                     .background(Tonal.fillStrong())
             )
         }
