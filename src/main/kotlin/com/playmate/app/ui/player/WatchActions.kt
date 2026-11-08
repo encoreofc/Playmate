@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -123,7 +124,6 @@ fun TitleBlock(
     onOpen: (() -> Unit)?,
     description: String = ""
 ) {
-    val scheme = MaterialTheme.colorScheme
     val viewsText = formatCount(views)?.let { "$it views" }
     val ago = agoText(uploaded)?.let { shortAgo(it) }
 
@@ -154,7 +154,7 @@ fun TitleBlock(
                     fontSize = pxSp(32),
                     lineHeight = pxSp(40)
                 ),
-                color = scheme.onSurfaceVariant,
+                color = quietText(),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
@@ -240,7 +240,7 @@ fun ChannelRow(
                             fontSize = pxSp(28),
                             lineHeight = pxSp(38)
                         ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = quietText(),
                         maxLines = 1
                     )
                 }
@@ -352,6 +352,43 @@ private fun pxSp(v: Int): TextUnit = with(LocalDensity.current) { px(v).toSp() }
 
 /** The light green of the Play Audio glyph (when it is on) and of the Autoplay switch. */
 private val AccentGreen = Color(0xFF98D89A)
+
+/**
+ * The dark-theme colours of the watch screen, measured off the reference screenshot. The screen
+ * is a dark grey, not pure black: [Background] is the value the dark theme's background (and
+ * surface) should have, so that the cards and the pill below sit on it the way they do in the
+ * reference (nearly melting into it).
+ */
+object WatchColors {
+    /** The screen behind everything: dark grey, not pure black. */
+    val Background = Color(0xFF151515)
+
+    /** The Comments card and the like / dislike pill. */
+    val Card = Color(0xFF232324)
+
+    /** The thin line under the row of buttons. */
+    val Line = Color(0xFF1C1C1C)
+
+    /** The views line and the subscribers line: a clearly brighter grey than the app had. */
+    val Quiet = Color(0xFFDADADA)
+}
+
+/** True while the theme is a dark one (the reference colours above are for the dark theme only). */
+@Composable
+private fun isDarkTheme(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
+/** Fill of the Comments card and of the like / dislike pill. */
+@Composable
+private fun cardFill(): Color = if (isDarkTheme()) WatchColors.Card else Tonal.fill()
+
+/** The thin line under the row of buttons. */
+@Composable
+private fun rowLine(): Color = if (isDarkTheme()) WatchColors.Line else Tonal.hairline()
+
+/** The quiet grey of the views line and the subscribers line. */
+@Composable
+private fun quietText(): Color =
+    if (isDarkTheme()) WatchColors.Quiet else MaterialTheme.colorScheme.onSurfaceVariant
 
 /**
  * The icons of the row under the video: thin round-ended outlines on a 24 grid, drawn at three
@@ -504,7 +541,7 @@ private fun RowScope.ActionTile(
         Text(
             text,
             style = TextStyle(
-                fontSize = pxSp(27),
+                fontSize = pxSp(26),
                 lineHeight = pxSp(32),
                 fontWeight = FontWeight.Normal,
                 textAlign = TextAlign.Center
@@ -516,9 +553,14 @@ private fun RowScope.ActionTile(
     }
 }
 
+/**
+ * A glyph in the 72-pixel box of a button. [size] is the glyph's own size inside that box (it is
+ * centred, so the label under it does not move); Save and Download use a smaller one, since the
+ * reference draws those two a tenth smaller than the others.
+ */
 @Composable
-private fun SlotGlyph(icon: ImageVector) {
-    Icon(icon, contentDescription = null, modifier = Modifier.size(px(72)))
+private fun SlotGlyph(icon: ImageVector, size: Dp? = null) {
+    Icon(icon, contentDescription = null, modifier = Modifier.size(size ?: px(72)))
 }
 
 /**
@@ -544,7 +586,7 @@ private fun ReactionPill(
         Modifier
             .height(px(75))
             .clip(CircleShape)
-            .background(Tonal.fill()),
+            .background(cardFill()),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
@@ -652,8 +694,8 @@ private fun RowScope.DownloadTile(info: PlayableInfo?, onClick: () -> Unit) {
                 strokeWidth = px(4),
                 modifier = Modifier.size(px(40))
             )
-            saved -> SlotGlyph(ActionIcons.DownloadDone)
-            else -> SlotGlyph(ActionIcons.Download)
+            saved -> SlotGlyph(ActionIcons.DownloadDone, px(65))
+            else -> SlotGlyph(ActionIcons.Download, px(65))
         }
     }
 }
@@ -690,7 +732,9 @@ fun ActionRow(
                 .padding(bottom = px(23)),
             verticalAlignment = Alignment.Top
         ) {
-            ActionTile(label = "Save", text = "Save", onClick = onSave) { SlotGlyph(ActionIcons.Save) }
+            ActionTile(label = "Save", text = "Save", onClick = onSave) {
+                SlotGlyph(ActionIcons.Save, px(65))
+            }
             ActionTile(
                 label = "Popup",
                 text = "Popup",
@@ -736,7 +780,7 @@ fun ActionRow(
                 .fillMaxWidth()
                 .padding(horizontal = px(36))
                 .height(px(2))
-                .background(Tonal.hairline())
+                .background(rowLine())
         )
 
         if (phoneOpen && info != null) {
@@ -771,7 +815,7 @@ fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick
             .padding(start = px(36), end = px(36), top = px(23), bottom = px(37))
             .fillMaxWidth()
             .clip(RoundedCornerShape(px(30)))
-            .background(Tonal.fill())
+            .background(cardFill())
             .clickable(onClick = onClick)
             .padding(start = px(31), end = px(31), top = px(18), bottom = px(22))
     ) {
@@ -779,7 +823,7 @@ fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick
             Text(
                 "Comments",
                 style = MaterialTheme.typography.titleSmall.copy(
-                    fontSize = pxSp(34),
+                    fontSize = pxSp(33),
                     lineHeight = pxSp(42),
                     fontWeight = FontWeight.SemiBold
                 )
@@ -788,7 +832,7 @@ fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick
                 Text(
                     it,
                     style = MaterialTheme.typography.bodySmall.copy(
-                        fontSize = pxSp(30),
+                        fontSize = pxSp(29),
                         lineHeight = pxSp(42)
                     ),
                     color = scheme.onSurfaceVariant,
