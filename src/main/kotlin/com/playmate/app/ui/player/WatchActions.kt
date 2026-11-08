@@ -45,6 +45,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -89,12 +100,11 @@ import com.playmate.app.ui.components.PmIcons
 import com.playmate.app.ui.theme.Tonal
 import com.playmate.app.ui.theme.tonalPress
 
-private val Hashtag = Regex("#[\\p{L}\\p{N}_]+")
-
 /**
- * Title and the quiet line under it (views, age, hashtags), with the like / dislike pill at the
- * right end of that line. Tapping the text opens the description panel under the player (see
- * [DescriptionPanel]); [onOpen] is null while the video is loading, and then there is no pill.
+ * Title and the quiet line under it (views and a short age like "7y ago"), with the like /
+ * dislike pill at the right end of that line. Tapping the title or the line opens the description
+ * panel under the player (see [DescriptionPanel]); [onOpen] is null while the video is loading,
+ * and then there is no pill.
  */
 @Composable
 fun TitleBlock(
@@ -106,9 +116,8 @@ fun TitleBlock(
     description: String = ""
 ) {
     val scheme = MaterialTheme.colorScheme
-    val tags = remember(description) { Hashtag.findAll(description).map { it.value }.distinct().take(2).toList() }
     val viewsText = formatCount(views)?.let { "$it views" }
-    val ago = agoText(uploaded)
+    val ago = agoText(uploaded)?.let { shortAgo(it) }
 
     Column(
         Modifier
@@ -131,29 +140,16 @@ fun TitleBlock(
                 if (part == viewsText) withStyle(SpanStyle(fontWeight = FontWeight.Medium, color = scheme.onSurface)) { append(part) }
                 else append(part)
             }
-            tags.forEach {
-                append("  ")
-                withStyle(SpanStyle(color = scheme.onSurfaceVariant.copy(alpha = 0.8f))) { append(it) }
-            }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    line,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                if (onOpen != null) {
-                    Text(
-                        "  …more",
-                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = scheme.onSurface
-                    )
-                }
-            }
+            Text(
+                line,
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
             if (onOpen != null) {
                 val vm: AppViewModel = viewModel()
                 Spacer(Modifier.width(px(24)))
@@ -231,8 +227,64 @@ private fun px(v: Int): Dp = with(LocalDensity.current) { (v * PX_SCALE).toDp() 
 private fun pxSp(v: Int): TextUnit = with(LocalDensity.current) { (v * PX_SCALE).toSp() }
 
 /**
- * One button of the row under the video: a big glyph with its name printed under it, no tile
- * behind it. [label] is what a screen reader says; [text] is what is printed. [lit] is the
+ * The icons of the row under the video, same shapes as [PmIcons] but drawn with a thick line so
+ * they read big and bold.
+ */
+private object BoldIcons {
+    private fun bold(name: String, vararg paths: String): ImageVector {
+        val builder = ImageVector.Builder(
+            name = name,
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        )
+        paths.forEach { d ->
+            builder.addPath(
+                pathData = PathParser().parsePathString(d).toNodes(),
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2.3f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round
+            )
+        }
+        return builder.build()
+    }
+
+    val Share: ImageVector by lazy {
+        bold("BoldShare", "M14.3 4.8l6.2 6.1-6.2 6.1", "M20 10.9h-8.6a6.9 6.9 0 0 0-6.9 6.9v1.4")
+    }
+    val Download: ImageVector by lazy {
+        bold("BoldDownload", "M12 4.2v10.6", "M7.4 10.4l4.6 4.6 4.6-4.6", "M5 19.6h14")
+    }
+    val DownloadDone: ImageVector by lazy {
+        bold("BoldDownloadDone", "M7.2 11.6l3.4 3.4 6.2-6.4", "M5 19.6h14")
+    }
+    val Headphones: ImageVector by lazy {
+        bold(
+            "BoldHeadphones",
+            "M4 14.5V12a8 8 0 0 1 16 0v2.5",
+            "M4 14.5h2.4a1.1 1.1 0 0 1 1.1 1.1v3.3a1.1 1.1 0 0 1-1.1 1.1h-.8A1.6 1.6 0 0 1 4 18.4z",
+            "M20 14.5h-2.4a1.1 1.1 0 0 0-1.1 1.1v3.3a1.1 1.1 0 0 0 1.1 1.1h.8a1.6 1.6 0 0 0 1.6-1.6z"
+        )
+    }
+    val Bookmark: ImageVector by lazy {
+        bold("BoldBookmark", "M7.2 3.8h9.6a1.4 1.4 0 0 1 1.4 1.4v14.6l-6.2-4.3-6.2 4.3V5.2a1.4 1.4 0 0 1 1.4-1.4z")
+    }
+    val PhoneSave: ImageVector by lazy {
+        bold(
+            "BoldPhoneSave",
+            "M8.2 2.8h7.6a1.8 1.8 0 0 1 1.8 1.8v14.8a1.8 1.8 0 0 1-1.8 1.8H8.2a1.8 1.8 0 0 1-1.8-1.8V4.6a1.8 1.8 0 0 1 1.8-1.8z",
+            "M12 7.6v6.2",
+            "M9.4 11.4l2.6 2.6 2.6-2.6"
+        )
+    }
+}
+
+/**
+ * One button of the row under the video: a big bold glyph with its name printed under it, no tile
+ * behind it. Pressed, a round grey patch fades in behind the glyph and the glyph shrinks a
+ * little. [label] is what a screen reader says; [text] is what is printed. [lit] is the
  * switched-on look (a disc of the text colour behind the glyph, the page colour as the glyph);
  * [state] is what a screen reader says about a toggle.
  */
@@ -246,6 +298,18 @@ private fun RowScope.ActionTile(
     glyph: @Composable () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val patch by animateColorAsState(
+        targetValue = if (pressed) Tonal.fillStrong() else Tonal.fillStrong().copy(alpha = 0f),
+        animationSpec = tween(120),
+        label = "tilePatch"
+    )
+    val squeeze by animateFloatAsState(
+        targetValue = if (pressed) 0.88f else 1f,
+        animationSpec = tween(120),
+        label = "tileSqueeze"
+    )
     val disc by animateColorAsState(
         targetValue = if (lit) scheme.onSurface else scheme.onSurface.copy(alpha = 0f),
         animationSpec = tween(180),
@@ -256,27 +320,36 @@ private fun RowScope.ActionTile(
     Column(
         Modifier
             .weight(1f)
-            .tonalPress(
-                shape = RoundedCornerShape(px(20)),
-                color = Color.Transparent,
-                onClick = onClick
-            )
+            .clickable(interactionSource = source, indication = null, onClick = onClick)
             .semantics {
+                role = Role.Button
                 contentDescription = label
                 if (state != null) stateDescription = state
             },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Box(
-            Modifier
-                .size(px(62))
-                .clip(CircleShape)
-                .background(disc),
-            contentAlignment = Alignment.Center
-        ) {
-            CompositionLocalProvider(LocalContentColor provides tint) { glyph() }
+        Box(Modifier.size(px(72)), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier
+                    .requiredSize(px(108))
+                    .clip(CircleShape)
+                    .background(patch)
+            )
+            Box(
+                Modifier
+                    .size(px(72))
+                    .graphicsLayer {
+                        scaleX = squeeze
+                        scaleY = squeeze
+                    }
+                    .clip(CircleShape)
+                    .background(disc),
+                contentAlignment = Alignment.Center
+            ) {
+                CompositionLocalProvider(LocalContentColor provides tint) { glyph() }
+            }
         }
-        Spacer(Modifier.height(px(8)))
+        Spacer(Modifier.height(px(4)))
         Text(
             text,
             style = TextStyle(
@@ -293,7 +366,7 @@ private fun RowScope.ActionTile(
 
 @Composable
 private fun SlotGlyph(icon: ImageVector) {
-    Icon(icon, contentDescription = null, modifier = Modifier.size(px(62)))
+    Icon(icon, contentDescription = null, modifier = Modifier.size(px(72)))
 }
 
 /**
@@ -424,11 +497,11 @@ private fun RowScope.DownloadTile(info: PlayableInfo?, onClick: () -> Unit) {
                 progress = { percent / 100f },
                 color = LocalContentColor.current,
                 trackColor = LocalContentColor.current.copy(alpha = 0.25f),
-                strokeWidth = px(5),
-                modifier = Modifier.size(px(40))
+                strokeWidth = px(6),
+                modifier = Modifier.size(px(46))
             )
-            saved -> SlotGlyph(PmIcons.DownloadDone)
-            else -> SlotGlyph(PmIcons.Download)
+            saved -> SlotGlyph(BoldIcons.DownloadDone)
+            else -> SlotGlyph(BoldIcons.Download)
         }
     }
 }
@@ -461,10 +534,10 @@ fun ActionRow(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = px(32))
-                .padding(top = px(35), bottom = px(35)),
+                .padding(top = px(14), bottom = px(32)),
             verticalAlignment = Alignment.Top
         ) {
-            ActionTile(label = "Share", text = "Share", onClick = onShare) { SlotGlyph(PmIcons.Share) }
+            ActionTile(label = "Share", text = "Share", onClick = onShare) { SlotGlyph(BoldIcons.Share) }
             DownloadTile(info) {
                 if (info == null) {
                     Toast.makeText(context, "This video is still loading.", Toast.LENGTH_SHORT).show()
@@ -489,13 +562,13 @@ fun ActionRow(
                         Toast.LENGTH_SHORT
                     ).show()
                 }
-            ) { SlotGlyph(PmIcons.Headphones) }
-            ActionTile(label = "Save", text = "Save", onClick = onSave) { SlotGlyph(PmIcons.Bookmark) }
+            ) { SlotGlyph(BoldIcons.Headphones) }
+            ActionTile(label = "Save", text = "Save", onClick = onSave) { SlotGlyph(BoldIcons.Bookmark) }
             ActionTile(
                 label = "Save to phone",
                 text = "To phone",
                 onClick = { if (info != null) phoneOpen = true }
-            ) { SlotGlyph(PmIcons.PhoneSave) }
+            ) { SlotGlyph(BoldIcons.PhoneSave) }
         }
 
         Box(
