@@ -617,7 +617,7 @@ private fun CommentRow(
             )
             Text(
                 comment.text,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
                 maxLines = if (open) Int.MAX_VALUE else 6,
                 overflow = TextOverflow.Ellipsis,
                 onTextLayout = { if (!open && it.hasVisualOverflow) long = true },
