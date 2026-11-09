@@ -330,9 +330,15 @@ private fun EmptySearch() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        PlaymateMark(Modifier.size(width = 56.dp, height = 40.dp))
-        Spacer(Modifier.height(16.dp))
+        PlaymateMark(width = 72.dp)
+        Spacer(Modifier.height(20.dp))
         Text("Search Playmate", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Find something to watch",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
