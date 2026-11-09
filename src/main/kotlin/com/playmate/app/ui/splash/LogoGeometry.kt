@@ -9,9 +9,8 @@ import androidx.compose.ui.graphics.vector.PathParser
 import kotlin.math.hypot
 
 /**
- * The PlayMate mark, in its own 1024 x 1024 coordinate space. The three paths and their gradients
- * are the exact artwork of the logo, so the in-app intro matches the launch screen the system
- * draws from `ic_splash_icon.xml` pixel for pixel.
+ * The PlayMate mark as code, in its own 1024 x 1024 coordinate space: three paths, each with its
+ * own gradient. Nothing here is an image; the intro draws these shapes directly.
  */
 internal object LogoGeometry {
 
@@ -39,8 +38,8 @@ internal object LogoGeometry {
     )
 
     /**
-     * Outer outline of the whole mark: one closed, rounded triangle, drawn clockwise on screen.
-     * The line of the intro follows an offset copy of this outline.
+     * The outer edge of the whole mark: one closed, rounded triangle, drawn clockwise on screen.
+     * The light of the intro runs along exactly this edge, so it belongs to the logo itself.
      */
     val silhouette: Path = parse(
         "M270.63,69.03L828.98,435.24C858.83,454.81 870.43,483 870.43,512" +
@@ -48,6 +47,11 @@ internal object LogoGeometry {
             "C220.35,987.95 153.57,951.88 153.57,891.76L153.57,132.24" +
             "C153.57,72.12 220.35,36.05 270.63,69.03Z"
     )
+
+    /** Centre of the small play mark inside the hollow. */
+    val markCenter = Offset(446f, 512f)
+
+    val rim: LogoRim by lazy { LogoRim.build() }
 
     val upperBrush: Brush = Brush.linearGradient(
         0f to Color(0xFF8AC78E),
@@ -76,104 +80,83 @@ internal object LogoGeometry {
 }
 
 /**
- * A closed line that runs around the mark at a fixed distance from its outline, starting at the
- * top-left corner and going clockwise: top edge, right corner, bottom edge, bottom-left corner,
- * left edge, and back to the top-left corner.
- *
- * It is sampled from the outline and pushed outwards along the normal, so the gap to the logo
- * stays the same on straight edges and on the rounded corners alike.
+ * Distances along the logo's outer edge, counted clockwise from the top-left corner: the lap
+ * starts in that corner, goes through the top edge to the right corner, along the bottom edge to
+ * the bottom-left corner, up the left edge, and closes where it began.
  */
-internal class LogoRing private constructor(
-    val path: Path,
+internal class LogoRim private constructor(
+    /** Length of the whole edge, in logo units. */
     val length: Float,
+    private val origin: Float,
+    /** The corners the light passes, with how far along the lap (0..1) it is when it gets there. */
     val corners: List<Corner>
 ) {
 
-    /** A corner of the mark: where it is on the line, and how far along the line the head is when it gets there (0..1). */
     class Corner(val point: Offset, val at: Float)
 
-    companion object {
-        private const val SAMPLES = 960
+    /** The stretch of edge between two distances (counted from the top-left corner) into [dest]. */
+    fun segment(measure: PathMeasure, from: Float, to: Float, dest: Path): Boolean {
+        dest.reset()
+        if (to - from < 0.5f) return false
+        val a = origin + from
+        val b = origin + to
+        return when {
+            b <= length -> measure.getSegment(a, b, dest, true)
+            a >= length -> measure.getSegment(a - length, b - length, dest, true)
+            else -> {
+                measure.getSegment(a, length, dest, true)
+                measure.getSegment(0f, b - length, dest, false)
+                true
+            }
+        }
+    }
 
-        // Outermost point of each rounded corner of the outline, in logo units.
+    fun pointAt(measure: PathMeasure, distance: Float): Offset =
+        measure.getPosition((origin + distance) % length)
+
+    companion object {
+        private const val PROBES = 1200
+
+        // Outermost point of each rounded corner of the edge, in logo units.
         private val TopLeftApex = Offset(193.2f, 65.7f)
         private val RightApex = Offset(870.43f, 512f)
         private val BottomLeftApex = Offset(193.2f, 958.3f)
 
-        /** [gap] is the distance between the logo outline and the line, in logo units. */
-        fun build(gap: Float): LogoRing {
+        fun build(): LogoRim {
             val measure = PathMeasure()
             measure.setPath(LogoGeometry.silhouette, false)
             val total = measure.length
 
-            val sx = FloatArray(SAMPLES)
-            val sy = FloatArray(SAMPLES)
-            val tx = FloatArray(SAMPLES)
-            val ty = FloatArray(SAMPLES)
-            for (i in 0 until SAMPLES) {
-                val distance = total * i / SAMPLES
-                val position = measure.getPosition(distance)
-                val tangent = measure.getTangent(distance)
-                val size = hypot(tangent.x, tangent.y).coerceAtLeast(1e-6f)
-                sx[i] = position.x
-                sy[i] = position.y
-                tx[i] = tangent.x / size
-                ty[i] = tangent.y / size
-            }
-
-            // Shoelace sign tells which way the outline runs; the outward normal flips with it.
-            var area = 0f
-            for (i in 0 until SAMPLES) {
-                val j = (i + 1) % SAMPLES
-                area += sx[i] * sy[j] - sx[j] * sy[i]
-            }
-            val outward = if (area > 0f) 1f else -1f
-
-            fun nearest(target: Offset): Int {
-                var best = 0
+            fun nearest(target: Offset): Float {
+                var best = 0f
                 var bestDistance = Float.MAX_VALUE
-                for (i in 0 until SAMPLES) {
-                    val d = hypot(sx[i] - target.x, sy[i] - target.y)
+                for (i in 0..PROBES) {
+                    val distance = total * i / PROBES
+                    val p = measure.getPosition(distance)
+                    val d = hypot(p.x - target.x, p.y - target.y)
                     if (d < bestDistance) {
                         bestDistance = d
-                        best = i
+                        best = distance
                     }
                 }
                 return best
             }
 
-            val start = nearest(TopLeftApex)
-            val rightIndex = (nearest(RightApex) - start + SAMPLES) % SAMPLES
-            val bottomIndex = (nearest(BottomLeftApex) - start + SAMPLES) % SAMPLES
-
-            val rx = FloatArray(SAMPLES)
-            val ry = FloatArray(SAMPLES)
-            for (i in 0 until SAMPLES) {
-                val s = (start + i) % SAMPLES
-                rx[i] = sx[s] + ty[s] * outward * gap
-                ry[i] = sy[s] - tx[s] * outward * gap
+            val origin = nearest(TopLeftApex)
+            fun corner(target: Offset): Corner {
+                val d = nearest(target)
+                return Corner(measure.getPosition(d), ((d - origin + total) % total) / total)
             }
 
-            val cumulative = FloatArray(SAMPLES + 1)
-            for (i in 1..SAMPLES) {
-                val a = i - 1
-                val b = i % SAMPLES
-                cumulative[i] = cumulative[i - 1] + hypot(rx[b] - rx[a], ry[b] - ry[a])
-            }
-            val length = cumulative[SAMPLES]
-
-            val path = Path()
-            path.moveTo(rx[0], ry[0])
-            for (i in 1 until SAMPLES) path.lineTo(rx[i], ry[i])
-            path.lineTo(rx[0], ry[0])
-
-            return LogoRing(
-                path = path,
-                length = length,
+            val start = measure.getPosition(origin)
+            return LogoRim(
+                length = total,
+                origin = origin,
                 corners = listOf(
-                    Corner(Offset(rx[rightIndex], ry[rightIndex]), cumulative[rightIndex] / length),
-                    Corner(Offset(rx[bottomIndex], ry[bottomIndex]), cumulative[bottomIndex] / length),
-                    Corner(Offset(rx[0], ry[0]), 1f)
+                    Corner(start, 0f),
+                    corner(RightApex),
+                    corner(BottomLeftApex),
+                    Corner(start, 1f)
                 )
             )
         }
