@@ -104,7 +104,7 @@ fun DescriptionPanel(
             ) {
                 Text(
                     title,
-                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, lineHeight = 27.sp, fontWeight = FontWeight.Normal),
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, lineHeight = 27.sp),
                     modifier = Modifier.weight(1f).padding(top = 6.dp)
                 )
                 IconButton(onClick = onDismiss) {
@@ -129,7 +129,7 @@ fun DescriptionPanel(
                 )
                 Text(
                     channelName,
-                    style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp, fontWeight = FontWeight.Normal),
+                    style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(start = 12.dp)
