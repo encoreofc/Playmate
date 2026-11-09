@@ -38,7 +38,8 @@ class MainActivity : ComponentActivity() {
         val playIntro = savedInstanceState == null
         splash.setOnExitAnimationListener { provider ->
             if (playIntro) {
-                // The intro already shows the same logo in the same place, so the hand-over is a straight swap.
+                // The system launch screen is the bare background (no image) and the intro starts on
+                // that same background, so the hand-over is a straight swap.
                 provider.remove()
             } else {
                 provider.view.animate()
