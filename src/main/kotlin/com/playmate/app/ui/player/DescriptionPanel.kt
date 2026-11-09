@@ -104,7 +104,7 @@ fun DescriptionPanel(
             ) {
                 Text(
                     title,
-                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, lineHeight = 27.sp),
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, lineHeight = 27.sp, fontWeight = FontWeight.Normal),
                     modifier = Modifier.weight(1f).padding(top = 6.dp)
                 )
                 IconButton(onClick = onDismiss) {
@@ -129,7 +129,7 @@ fun DescriptionPanel(
                 )
                 Text(
                     channelName,
-                    style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp),
+                    style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp, fontWeight = FontWeight.Normal),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(start = 12.dp)
@@ -155,7 +155,7 @@ fun DescriptionPanel(
                     Box {
                         Text(
                             styledDescription(description, link),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
                             maxLines = if (expanded) Int.MAX_VALUE else 6,
                             overflow = TextOverflow.Clip,
                             onTextLayout = { if (!expanded && it.hasVisualOverflow) overflowing = true }
