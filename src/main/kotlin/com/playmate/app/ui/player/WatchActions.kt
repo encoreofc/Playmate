@@ -351,7 +351,7 @@ private fun px(v: Int): Dp {
 @Composable
 private fun pxSp(v: Int): TextUnit = with(LocalDensity.current) { px(v).toSp() }
 
-/** The light green of the Autoplay switch. (The Play Audio glyph, when it is on, is yellow: see [audioLit].) */
+/** The light green of the Autoplay switch. (The Play Audio glyph, when it is on, is the logo yellow.) */
 private val AccentGreen = Color(0xFF98D89A)
 
 /**
@@ -383,13 +383,6 @@ object WatchColors {
 /** True while the theme is a dark one (the reference colours above are for the dark theme only). */
 @Composable
 private fun isDarkTheme(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
-
-/**
- * The Play Audio glyph when it is switched on: the yellow of the Playmate logo. On the light theme
- * the pale logo yellow would barely show against the page, so there it is a deeper gold of the same hue.
- */
-@Composable
-private fun audioLit(): Color = if (isDarkTheme()) LogoGeometry.Yellow else Color(0xFFB88A00)
 
 /** Fill of the Comments card and of the like / dislike pill. */
 @Composable
@@ -805,7 +798,7 @@ fun ActionRow(
                 label = "Play audio",
                 text = "Play Audio",
                 lit = background,
-                litColor = audioLit(),
+                litColor = LogoGeometry.Yellow,
                 state = if (background) "On" else "Off",
                 onClick = {
                     background = !background
