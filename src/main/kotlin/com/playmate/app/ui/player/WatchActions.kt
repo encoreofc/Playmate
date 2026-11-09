@@ -30,6 +30,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ripple
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.indication
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
@@ -140,7 +142,7 @@ fun TitleBlock(
             style = MaterialTheme.typography.titleLarge.copy(
                 fontSize = pxSp(38),
                 lineHeight = pxSp(53),
-                fontWeight = FontWeight.Normal
+                fontWeight = FontWeight.Bold
             ),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
@@ -220,9 +222,9 @@ fun ChannelRow(
                     Text(
                         name,
                         style = MaterialTheme.typography.titleSmall.copy(
-                            fontSize = pxSp(28),
-                            lineHeight = pxSp(34),
-                            fontWeight = FontWeight.Normal
+                            fontSize = pxSp(36),
+                            lineHeight = pxSp(44),
+                            fontWeight = FontWeight.SemiBold
                         ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -431,7 +433,7 @@ private object ActionIcons {
         return builder.build()
     }
 
-    private const val LINE = 0.9f
+    private const val LINE = 1.1f
 
     val Save: ImageVector by lazy {
         thin(
@@ -502,7 +504,7 @@ private object ActionIcons {
                 pathData = PathParser().parsePathString(d).toNodes(),
                 fill = if (solid) SolidColor(Color.Black) else null,
                 stroke = SolidColor(Color.Black),
-                strokeLineWidth = 2.6f,
+                strokeLineWidth = 3.1f,
                 strokeLineCap = StrokeCap.Round,
                 strokeLineJoin = StrokeJoin.Round
             )
@@ -525,8 +527,9 @@ private object ActionIcons {
  * One button of the row under the video: a thin glyph with its name printed under it, no tile
  * behind it. Pressed, a round grey patch fades in behind the glyph and the glyph shrinks a
  * little. [label] is what a screen reader says; [text] is what is printed (it may wrap to a
- * second line). [lit] is the switched-on look: the glyph takes the colour [litColor] (nothing
- * else changes, no disc behind it); [state] is what a screen reader says about a toggle.
+ * second line). [lit] is the switched-on look: the glyph takes the colour [litColor] and a soft
+ * disc of that colour fills in behind it, and pressing sends a ripple of that colour across the
+ * disc; [state] is what a screen reader says about a toggle.
  */
 @Composable
 private fun RowScope.ActionTile(
@@ -541,8 +544,23 @@ private fun RowScope.ActionTile(
     val scheme = MaterialTheme.colorScheme
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
+    // The disc behind the glyph. A plain button gets the grey press patch. A toggle that has a
+    // [litColor] (Play Audio) works like the headphones button in the corner of the player: a ripple
+    // of that colour spreads from the finger, the disc fills while it is pressed, and while the
+    // toggle is on the disc stays softly filled behind the glyph.
+    val patchTarget = if (litColor != null) {
+        when {
+            pressed -> litColor.copy(alpha = 0.30f)
+            lit -> litColor.copy(alpha = 0.20f)
+            else -> litColor.copy(alpha = 0f)
+        }
+    } else if (pressed) {
+        Tonal.fillStrong()
+    } else {
+        Tonal.fillStrong().copy(alpha = 0f)
+    }
     val patch by animateColorAsState(
-        targetValue = if (pressed) Tonal.fillStrong() else Tonal.fillStrong().copy(alpha = 0f),
+        targetValue = patchTarget,
         animationSpec = tween(120),
         label = "tilePatch"
     )
@@ -574,6 +592,10 @@ private fun RowScope.ActionTile(
                     .requiredSize(px(108))
                     .clip(CircleShape)
                     .background(patch)
+                    .then(
+                        if (litColor != null) Modifier.indication(source, ripple(color = litColor))
+                        else Modifier
+                    )
             )
             Box(
                 Modifier
@@ -759,7 +781,7 @@ private fun RowScope.DownloadTile(info: PlayableInfo?, onClick: () -> Unit) {
  *
  * Five equal columns spread over the width, each a thin glyph with its name under it, and a thin
  * line under the whole row. Play Audio is the one toggle (it is the background-play switch): it
- * looks like the others until it is switched on, then its glyph turns yellow. Popup is only drawn for now: it does nothing yet.
+ * looks like the others until it is switched on, then its glyph turns yellow on a soft yellow disc. Popup is only drawn for now: it does nothing yet.
  */
 @Composable
 fun ActionRow(
