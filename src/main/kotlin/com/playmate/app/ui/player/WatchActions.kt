@@ -101,6 +101,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import com.playmate.app.ui.components.PmIcons
+import com.playmate.app.ui.splash.LogoGeometry
 import com.playmate.app.ui.theme.Tonal
 import com.playmate.app.ui.theme.tonalPress
 import kotlin.math.PI
@@ -139,7 +140,7 @@ fun TitleBlock(
             style = MaterialTheme.typography.titleLarge.copy(
                 fontSize = pxSp(38),
                 lineHeight = pxSp(53),
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Normal
             ),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
@@ -219,9 +220,9 @@ fun ChannelRow(
                     Text(
                         name,
                         style = MaterialTheme.typography.titleSmall.copy(
-                            fontSize = pxSp(36),
-                            lineHeight = pxSp(44),
-                            fontWeight = FontWeight.SemiBold
+                            fontSize = pxSp(28),
+                            lineHeight = pxSp(34),
+                            fontWeight = FontWeight.Normal
                         ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -350,7 +351,7 @@ private fun px(v: Int): Dp {
 @Composable
 private fun pxSp(v: Int): TextUnit = with(LocalDensity.current) { px(v).toSp() }
 
-/** The light green of the Play Audio glyph (when it is on) and of the Autoplay switch. */
+/** The light green of the Autoplay switch. (The Play Audio glyph, when it is on, is yellow: see [audioLit].) */
 private val AccentGreen = Color(0xFF98D89A)
 
 /**
@@ -382,6 +383,13 @@ object WatchColors {
 /** True while the theme is a dark one (the reference colours above are for the dark theme only). */
 @Composable
 private fun isDarkTheme(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
+/**
+ * The Play Audio glyph when it is switched on: the yellow of the Playmate logo. On the light theme
+ * the pale logo yellow would barely show against the page, so there it is a deeper gold of the same hue.
+ */
+@Composable
+private fun audioLit(): Color = if (isDarkTheme()) LogoGeometry.Yellow else Color(0xFFB88A00)
 
 /** Fill of the Comments card and of the like / dislike pill. */
 @Composable
@@ -758,7 +766,7 @@ private fun RowScope.DownloadTile(info: PlayableInfo?, onClick: () -> Unit) {
  *
  * Five equal columns spread over the width, each a thin glyph with its name under it, and a thin
  * line under the whole row. Play Audio is the one toggle (it is the background-play switch): it
- * looks like the others until it is switched on, then its glyph turns light green. Popup is only drawn for now: it does nothing yet.
+ * looks like the others until it is switched on, then its glyph turns yellow. Popup is only drawn for now: it does nothing yet.
  */
 @Composable
 fun ActionRow(
@@ -797,7 +805,7 @@ fun ActionRow(
                 label = "Play audio",
                 text = "Play Audio",
                 lit = background,
-                litColor = AccentGreen,
+                litColor = audioLit(),
                 state = if (background) "On" else "Off",
                 onClick = {
                     background = !background
@@ -821,7 +829,7 @@ fun ActionRow(
             }
             ActionTile(
                 label = "Save to phone",
-                text = "Save to phone",
+                text = "To Phone",
                 onClick = { if (info != null) phoneOpen = true }
             ) { SlotGlyph(ActionIcons.Phone) }
         }
