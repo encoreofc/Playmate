@@ -3,6 +3,7 @@ package com.playmate.app.ui.player
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -111,12 +112,13 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Title and the quiet line under it (views and a short age like "7y ago"), with the like /
- * dislike pill at the right end of that line. Tapping the title or the line opens the description
- * panel under the player (see [DescriptionPanel]); [onOpen] is null while the video is loading,
- * and then there is no pill.
+ * Title and the quiet line under it (views and the upload age, like "1 week ago"), followed by a
+ * bold "...more". Tapping the title or the line opens the description panel under the player (see
+ * [DescriptionPanel]); [onOpen] is null while the video is loading, and then there is no "...more".
  *
- * The channel name is not printed in the quiet line any more: it lives in the channel row below.
+ * The title is one line that ends in an ellipsis. The like / dislike buttons no longer sit on the
+ * quiet line: they are the first buttons of the scrolling row under the channel (see [ActionRow]).
+ * The channel name is not printed in the quiet line: it lives in the channel row below.
  */
 @Composable
 fun TitleBlock(
@@ -128,48 +130,49 @@ fun TitleBlock(
     description: String = ""
 ) {
     val viewsText = formatCount(views)?.let { "$it views" }
-    val ago = agoText(uploaded)?.let { shortAgo(it) }
+    val ago = agoText(uploaded)
 
     Column(
         Modifier
             .fillMaxWidth()
             .clickable(enabled = onOpen != null, onClick = { onOpen?.invoke() })
-            .padding(horizontal = px(36))
-            .padding(top = px(38))
+            .padding(horizontal = px720(24))
+            .padding(top = px720(22))
     ) {
         Text(
             title,
             style = MaterialTheme.typography.titleLarge.copy(
-                fontSize = pxSp(38),
-                lineHeight = pxSp(53),
+                fontSize = pxSp720(40),
+                lineHeight = pxSp720(52),
                 fontWeight = FontWeight.Bold
             ),
-            maxLines = 2,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Row(
-            Modifier.offset(y = -px(3)),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Spacer(Modifier.height(px720(3)))
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                listOfNotNull(viewsText, ago).joinToString(" · "),
+                listOfNotNull(viewsText, ago).joinToString(" • "),
                 style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = pxSp(32),
-                    lineHeight = pxSp(40)
+                    fontSize = pxSp720(26),
+                    lineHeight = pxSp720(32)
                 ),
                 color = quietText(),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f, fill = false)
             )
             if (onOpen != null) {
-                val vm: AppViewModel = viewModel()
-                Spacer(Modifier.width(px(24)))
-                ReactionPill(
-                    reaction = vm.meta?.reaction ?: Reaction.None,
-                    likeCount = vm.meta?.likeCount,
-                    onLike = { vm.react(Reaction.Liked) },
-                    onDislike = { vm.react(Reaction.Disliked) }
+                Spacer(Modifier.width(px720(8)))
+                Text(
+                    "...more",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = pxSp720(26),
+                        lineHeight = pxSp720(32),
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
                 )
             }
         }
@@ -197,14 +200,14 @@ fun ChannelRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = px(36))
-            .padding(top = px(36), bottom = px(37)),
+            .padding(horizontal = px720(24))
+            .padding(top = px720(50), bottom = px720(44)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
             Modifier
                 .weight(1f)
-                .clip(RoundedCornerShape(px(24)))
+                .clip(RoundedCornerShape(px720(24)))
                 .clickable(enabled = channelId != null) { vm.openChannel(channelId, name, avatar) },
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -213,17 +216,17 @@ fun ChannelRow(
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .size(px(102))
+                    .size(px720(88))
                     .clip(CircleShape)
                     .background(Tonal.fill())
             )
-            Column(Modifier.weight(1f).padding(start = px(36), end = px(24))) {
+            Column(Modifier.weight(1f).padding(start = px720(24), end = px720(24))) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         name,
                         style = MaterialTheme.typography.titleSmall.copy(
-                            fontSize = pxSp(36),
-                            lineHeight = pxSp(44),
+                            fontSize = pxSp720(33),
+                            lineHeight = pxSp720(36),
                             fontWeight = FontWeight.SemiBold
                         ),
                         maxLines = 1,
@@ -236,12 +239,11 @@ fun ChannelRow(
                     }
                 }
                 meta?.subscribers?.let {
-                    Spacer(Modifier.height(px(3)))
                     Text(
                         it,
                         style = MaterialTheme.typography.bodySmall.copy(
-                            fontSize = pxSp(28),
-                            lineHeight = pxSp(38)
+                            fontSize = pxSp720(25),
+                            lineHeight = pxSp720(30)
                         ),
                         color = quietText(),
                         maxLines = 1
@@ -335,12 +337,17 @@ private fun BadgeMark(badge: ChannelBadge) {
 }
 
 /**
- * Every size from here down is measured off the reference screenshot (a phone 852 pixels wide)
- * and then scaled to the width of the phone it runs on, so the title, the pill, the buttons and
- * the cards keep exactly the same proportions on every screen. To make the whole look a little
- * bigger or smaller, change [PX_SCALE].
+ * Every size from here down is measured off a reference screenshot and then scaled to the width of
+ * the phone it runs on, so the title, the buttons and the cards keep exactly the same proportions
+ * on every screen. To make the whole look a little bigger or smaller, change [PX_SCALE].
+ *
+ * There are two rulers. [px] / [pxSp] count in a phone 852 pixels wide (the older measurements:
+ * the badge, the Up next header, the Autoplay switch). [px720] / [pxSp720] count in a phone 720
+ * pixels wide (the current watch screen: title, channel row, the row of buttons, the comments
+ * card). Both end up as the same share of the real screen width.
  */
 private const val REF_WIDTH = 852f
+private const val SHOT_WIDTH = 720f
 private const val PX_SCALE = 1f
 
 @Composable
@@ -352,6 +359,17 @@ private fun px(v: Int): Dp {
 
 @Composable
 private fun pxSp(v: Int): TextUnit = with(LocalDensity.current) { px(v).toSp() }
+
+/** Same as [px], but the number counts in a phone 720 pixels wide. */
+@Composable
+private fun px720(v: Int): Dp {
+    val config = LocalConfiguration.current
+    val width = minOf(config.screenWidthDp, config.screenHeightDp)
+    return (v * PX_SCALE * width / SHOT_WIDTH).dp
+}
+
+@Composable
+private fun pxSp720(v: Int): TextUnit = with(LocalDensity.current) { px720(v).toSp() }
 
 /** The light green of the Autoplay switch. (The Play Audio glyph, when it is on, is the logo yellow.) */
 private val AccentGreen = Color(0xFF98D89A)
@@ -366,7 +384,7 @@ object WatchColors {
     /** The screen behind everything: dark grey, not pure black. */
     val Background = Color(0xFF151515)
 
-    /** The Comments card and the like / dislike pill. */
+    /** The Comments card, the buttons of the row and the like / dislike pill. */
     val Card = Color(0xFF232324)
 
     /** The thin line under the row of buttons. */
@@ -386,7 +404,7 @@ object WatchColors {
 @Composable
 private fun isDarkTheme(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
-/** Fill of the Comments card and of the like / dislike pill. */
+/** Fill of the Comments card, of the buttons of the row and of the like / dislike pill. */
 @Composable
 private fun cardFill(): Color = if (isDarkTheme()) WatchColors.Card else Tonal.fill()
 
@@ -474,6 +492,18 @@ private object ActionIcons {
             "M12.25 16.7L12.85 17.35L12.25 18L11.65 17.35Z"
         )
     }
+
+    /** Share: three small rings joined by two lines (one on the left, two on the right). */
+    val Share: ImageVector by lazy {
+        thin(
+            "ThinShare", LINE,
+            "M6.4 12 a1.6 1.6 0 1 0 3.2 0 a1.6 1.6 0 1 0 -3.2 0 Z",
+            "M14.4 7.7 a1.6 1.6 0 1 0 3.2 0 a1.6 1.6 0 1 0 -3.2 0 Z",
+            "M14.4 16.3 a1.6 1.6 0 1 0 3.2 0 a1.6 1.6 0 1 0 -3.2 0 Z",
+            "M9.41 11.24 L14.59 8.46",
+            "M9.41 12.76 L14.59 15.54"
+        )
+    }
     val Note: ImageVector by lazy {
         thin(
             "ThinNote", 1.9f,
@@ -524,12 +554,13 @@ private object ActionIcons {
 }
 
 /**
- * One button of the row under the video: a thin glyph with its name printed under it, no tile
- * behind it. Pressed, a round grey patch fades in behind the glyph and the glyph shrinks a
- * little. [label] is what a screen reader says; [text] is what is printed (it may wrap to a
- * second line). [lit] is the switched-on look: the glyph takes the colour [litColor] and a soft
- * disc of that colour fills in behind it, and pressing sends a ripple of that colour across the
- * disc; [state] is what a screen reader says about a toggle.
+ * One button of the row under the channel: a round-ended chip, 79 pixels high, with a thin glyph
+ * at the left and its name printed at the right, on the same grey as the Comments card. The row
+ * scrolls sideways, so a chip is as wide as its name needs. Pressed, a soft patch fades in over
+ * the chip and the glyph shrinks a little. [label] is what a screen reader says; [text] is what
+ * is printed. [lit] is the switched-on look: the glyph takes the colour [litColor] and the chip
+ * fills softly with that colour, and pressing sends a ripple of that colour across the chip;
+ * [state] is what a screen reader says about a toggle.
  */
 @Composable
 private fun RowScope.ActionTile(
@@ -544,10 +575,10 @@ private fun RowScope.ActionTile(
     val scheme = MaterialTheme.colorScheme
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
-    // The disc behind the glyph. A plain button gets the grey press patch. A toggle that has a
+    // The patch over the chip. A plain button gets the grey press patch. A toggle that has a
     // [litColor] (Play Audio) works like the headphones button in the corner of the player: a ripple
-    // of that colour spreads from the finger, the disc fills while it is pressed, and while the
-    // toggle is on the disc stays softly filled behind the glyph.
+    // of that colour spreads from the finger, the chip fills while it is pressed, and while the
+    // toggle is on the chip stays softly filled behind the glyph.
     val patchTarget = if (litColor != null) {
         when {
             pressed -> litColor.copy(alpha = 0.30f)
@@ -575,105 +606,111 @@ private fun RowScope.ActionTile(
         label = "tileTint"
     )
 
-    Column(
+    Row(
         Modifier
-            .weight(1f)
+            .height(px720(79))
+            .clip(CircleShape)
+            .background(cardFill())
+            .background(patch)
+            .then(
+                if (litColor != null) Modifier.indication(source, ripple(color = litColor))
+                else Modifier
+            )
             .clickable(interactionSource = source, indication = null, onClick = onClick)
             .semantics {
                 role = Role.Button
                 contentDescription = label
                 if (state != null) stateDescription = state
-            },
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(Modifier.size(px(72)), contentAlignment = Alignment.Center) {
-            Box(
-                Modifier
-                    .requiredSize(px(108))
-                    .clip(CircleShape)
-                    .background(patch)
-                    .then(
-                        if (litColor != null) Modifier.indication(source, ripple(color = litColor))
-                        else Modifier
-                    )
-            )
-            Box(
-                Modifier
-                    .size(px(72))
-                    .graphicsLayer {
-                        scaleX = squeeze
-                        scaleY = squeeze
-                    }
-                    .clip(CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                CompositionLocalProvider(LocalContentColor provides tint) { glyph() }
             }
+            .padding(start = px720(15), end = px720(29)),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(px720(61))
+                .graphicsLayer {
+                    scaleX = squeeze
+                    scaleY = squeeze
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            CompositionLocalProvider(LocalContentColor provides tint) { glyph() }
         }
-        Spacer(Modifier.height(px(3)))
         Text(
             text,
             style = TextStyle(
-                fontSize = pxSp(26),
-                lineHeight = pxSp(32),
-                fontWeight = FontWeight.Normal,
-                textAlign = TextAlign.Center
+                fontSize = pxSp720(28),
+                lineHeight = pxSp720(34),
+                fontWeight = FontWeight.Medium
             ),
             color = scheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
 
 /**
- * A glyph in the 72-pixel box of a button. [size] is the glyph's own size inside that box (it is
- * centred, so the label under it does not move); Save and Download use a smaller one, since the
- * reference draws those two a tenth smaller than the others.
+ * A glyph in the 61-pixel box of a chip. [size] is the glyph's own size inside that box (it is
+ * centred, so the name next to it does not move).
  */
 @Composable
 private fun SlotGlyph(icon: ImageVector, size: Dp? = null) {
-    Icon(icon, contentDescription = null, modifier = Modifier.size(size ?: px(72)))
+    Icon(icon, contentDescription = null, modifier = Modifier.size(size ?: px720(61)))
 }
 
 /**
- * Like and dislike as one rounded pill with a thin line between them, at the right end of the
- * line under the title. Liked / disliked shows the YouTube way: the thumb is an outline when off
- * and a solid shape when on, and the like thumb throws a few rays and the count rolls when it is
- * turned on.
+ * Like and dislike as two grey halves with a thin gap between them, the first chips of the row
+ * under the channel. The like half is round at the left and nearly square at the right, the
+ * dislike half the other way round. Liked / disliked shows the usual way: the thumb is an outline
+ * when off and a solid shape when on, and the like thumb throws a few rays and the count rolls
+ * when it is turned on. [dislikeCount] is printed next to the dislike thumb when there is one;
+ * without it the half is just the thumb.
  */
 @Composable
 private fun ReactionPill(
     reaction: Reaction,
     likeCount: String?,
     onLike: () -> Unit,
-    onDislike: () -> Unit
+    onDislike: () -> Unit,
+    dislikeCount: String? = null
 ) {
     val liked = reaction == Reaction.Liked
     val disliked = reaction == Reaction.Disliked
     val haptic = LocalHapticFeedback.current
     val scheme = MaterialTheme.colorScheme
-    val glyph = px(44)
+    val glyph = px720(46)
+    val full = px720(79) / 2
+    val edge = px720(10)
+    val likeShape = RoundedCornerShape(topStart = full, bottomStart = full, topEnd = edge, bottomEnd = edge)
+    val dislikeShape = RoundedCornerShape(topStart = edge, bottomStart = edge, topEnd = full, bottomEnd = full)
+    val countStyle = MaterialTheme.typography.labelLarge.copy(
+        fontSize = pxSp720(28),
+        lineHeight = pxSp720(34),
+        fontWeight = FontWeight.Medium
+    )
 
     Row(
-        Modifier
-            .height(px(75))
-            .clip(CircleShape)
-            .background(cardFill()),
+        Modifier.height(px720(79)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
             Modifier
                 .fillMaxHeight()
+                .clip(likeShape)
+                .background(cardFill())
                 .tonalPress(
-                    shape = RectangleShape,
+                    shape = likeShape,
                     color = Color.Transparent,
                     onClick = {
                         if (!liked) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onLike()
                     }
                 )
-                .padding(start = px(24), end = px(25))
+                .padding(
+                    start = px720(22),
+                    end = if (likeCount != null) px720(29) else px720(22)
+                )
                 .semantics {
                     contentDescription = "Like"
                     if (liked) stateDescription = "Liked"
@@ -686,42 +723,38 @@ private fun ReactionPill(
                     outline = ActionIcons.ThumbUp,
                     solid = ActionIcons.ThumbUpSolid,
                     size = glyph,
-                    reach = px(16)
+                    reach = px720(14)
                 )
                 likeCount?.let {
                     RollingCount(
                         it,
-                        style = MaterialTheme.typography.labelLarge.copy(
-                            fontSize = pxSp(31),
-                            lineHeight = pxSp(36),
-                            fontWeight = FontWeight.Normal
-                        ),
+                        style = countStyle,
                         color = countColor(),
-                        modifier = Modifier.padding(start = px(17))
+                        modifier = Modifier.padding(start = px720(8))
                     )
                 }
             }
         }
-        Box(
-            Modifier
-                .width(px(2))
-                .height(px(41))
-                .background(pillDivider())
-        )
-        Box(
+        Spacer(Modifier.width(px720(4)))
+        Row(
             Modifier
                 .fillMaxHeight()
+                .clip(dislikeShape)
+                .background(cardFill())
                 .tonalPress(
-                    shape = RectangleShape,
+                    shape = dislikeShape,
                     color = Color.Transparent,
                     onClick = onDislike
                 )
-                .padding(horizontal = px(23))
+                .padding(
+                    start = px720(22),
+                    end = if (dislikeCount != null) px720(30) else px720(22)
+                )
                 .semantics {
                     contentDescription = "Dislike"
                     if (disliked) stateDescription = "Disliked"
                 },
-            contentAlignment = Alignment.Center
+            verticalAlignment = Alignment.CenterVertically
         ) {
             CompositionLocalProvider(LocalContentColor provides scheme.onSurface) {
                 AnimatedThumb(
@@ -731,6 +764,14 @@ private fun ReactionPill(
                     size = glyph,
                     rays = false
                 )
+                dislikeCount?.let {
+                    RollingCount(
+                        it,
+                        style = countStyle,
+                        color = countColor(),
+                        modifier = Modifier.padding(start = px720(8))
+                    )
+                }
             }
         }
     }
@@ -765,8 +806,8 @@ private fun RowScope.DownloadTile(info: PlayableInfo?, onClick: () -> Unit) {
                 progress = { percent / 100f },
                 color = LocalContentColor.current,
                 trackColor = LocalContentColor.current.copy(alpha = 0.25f),
-                strokeWidth = px(4),
-                modifier = Modifier.size(px(40))
+                strokeWidth = px720(3),
+                modifier = Modifier.size(px720(34))
             )
             saved -> SlotGlyph(ActionIcons.DownloadDone)
             else -> SlotGlyph(ActionIcons.Download)
@@ -775,13 +816,16 @@ private fun RowScope.DownloadTile(info: PlayableInfo?, onClick: () -> Unit) {
 }
 
 /**
- * The row under a video, in this order: Save, Popup, Play Audio, Download, Save to phone. (Like
- * and dislike sit in the pill at the end of the line under the title; comments sit right below
- * this row.) [onShare] is no longer used by this row; sharing is not one of its buttons.
+ * The row under the channel: one line of grey chips that scrolls sideways and is cut at the page
+ * margin on both sides. In this order: the like / dislike pair, Share, Save, Popup, Play Audio,
+ * Download, Save to phone. Share comes first after the pair because it is the thing people reach
+ * for right after a reaction; the rest keep the order the app already had. (Comments sit right
+ * below this row.)
  *
- * Five equal columns spread over the width, each a thin glyph with its name under it, and a thin
- * line under the whole row. Play Audio is the one toggle (it is the background-play switch): it
- * looks like the others until it is switched on, then its glyph turns yellow on a soft yellow disc. Popup is only drawn for now: it does nothing yet.
+ * Each chip is a thin glyph with its name beside it. Play Audio is the one toggle (it is the
+ * background-play switch): it looks like the others until it is switched on, then its glyph turns
+ * yellow on a soft yellow chip. Popup is only drawn for now: it does nothing yet. The like /
+ * dislike pair is hidden while the video is still loading.
  */
 @Composable
 fun ActionRow(
@@ -802,10 +846,23 @@ fun ActionRow(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = px(16))
-                .padding(bottom = px(23)),
-            verticalAlignment = Alignment.Top
+                .padding(horizontal = px720(24))
+                .padding(bottom = px720(25))
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(px720(16)),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            if (info != null) {
+                ReactionPill(
+                    reaction = vm.meta?.reaction ?: Reaction.None,
+                    likeCount = vm.meta?.likeCount,
+                    onLike = { vm.react(Reaction.Liked) },
+                    onDislike = { vm.react(Reaction.Disliked) }
+                )
+            }
+            ActionTile(label = "Share", text = "Share", onClick = onShare) {
+                SlotGlyph(ActionIcons.Share)
+            }
             ActionTile(label = "Save", text = "Save", onClick = onSave) {
                 SlotGlyph(ActionIcons.Save)
             }
@@ -844,18 +901,10 @@ fun ActionRow(
             }
             ActionTile(
                 label = "Save to phone",
-                text = "To Phone",
+                text = "Save to phone",
                 onClick = { if (info != null) phoneOpen = true }
             ) { SlotGlyph(ActionIcons.Phone) }
         }
-
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = px(36))
-                .height(px(2))
-                .background(rowLine())
-        )
 
         if (phoneOpen && info != null) {
             PhoneSaveSheet(info = info, onDismiss = { phoneOpen = false })
@@ -886,71 +935,72 @@ fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick
     val scheme = MaterialTheme.colorScheme
     Column(
         Modifier
-            .padding(start = px(36), end = px(36), top = px(23), bottom = px(37))
+            .padding(start = px720(24), end = px720(24), top = px720(24), bottom = px720(17))
             .fillMaxWidth()
-            .clip(RoundedCornerShape(px(30)))
+            .clip(RoundedCornerShape(px720(24)))
             .background(cardFill())
             .clickable(onClick = onClick)
-            .padding(start = px(31), end = px(31), top = px(18), bottom = px(22))
+            .padding(start = px720(24), end = px720(24), top = px720(22), bottom = px720(22))
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "Comments",
                 style = MaterialTheme.typography.titleSmall.copy(
-                    fontSize = pxSp(33),
-                    lineHeight = pxSp(42),
+                    fontSize = pxSp720(30),
+                    lineHeight = pxSp720(36),
                     fontWeight = FontWeight.SemiBold
                 )
             )
             count?.let {
                 Text(
-                    it,
+                    "· $it",
                     style = MaterialTheme.typography.bodySmall.copy(
-                        fontSize = pxSp(29),
-                        lineHeight = pxSp(42)
+                        fontSize = pxSp720(30),
+                        lineHeight = pxSp720(36),
+                        fontWeight = FontWeight.Medium
                     ),
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = px(12))
+                    color = scheme.onSurface,
+                    modifier = Modifier.padding(start = px720(10))
                 )
             }
         }
         when {
-            preview != null -> Row(Modifier.padding(top = px(17)), verticalAlignment = Alignment.Top) {
+            preview != null -> Row(Modifier.padding(top = px720(24)), verticalAlignment = Alignment.CenterVertically) {
                 AsyncImage(
                     model = preview.avatar,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(px(61))
+                        .size(px720(48))
                         .clip(CircleShape)
                         .background(Tonal.fillStrong())
                 )
                 Text(
                     preview.text,
                     style = MaterialTheme.typography.bodySmall.copy(
-                        fontSize = pxSp(28),
-                        lineHeight = pxSp(40)
+                        fontSize = pxSp720(26),
+                        lineHeight = pxSp720(34)
                     ),
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(start = px(29), top = px(10))
+                    modifier = Modifier.padding(start = px720(24))
                 )
             }
             state is Load.Failed -> Text(
                 "Comments are turned off or unavailable",
                 style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = pxSp(28),
-                    lineHeight = pxSp(40)
+                    fontSize = pxSp720(26),
+                    lineHeight = pxSp720(34)
                 ),
                 color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = px(17))
+                modifier = Modifier.padding(top = px720(24))
             )
             state == null || state is Load.Loading -> Box(
                 Modifier
-                    .padding(top = px(25))
+                    .padding(top = px720(28))
                     .fillMaxWidth(0.7f)
-                    .height(px(26))
-                    .clip(RoundedCornerShape(px(13)))
+                    .height(px720(22))
+                    .clip(RoundedCornerShape(px720(11)))
                     .background(Tonal.fillStrong())
             )
         }
