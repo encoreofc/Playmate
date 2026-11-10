@@ -7,7 +7,7 @@ enum class MusicKind { Song, Video, Album, Playlist, Artist, Podcast, Episode, M
 enum class MusicLayout { Tile, Row, Episode, Button }
 
 /** How a whole shelf is laid out on screen. */
-enum class ShelfStyle { Tiles, Rows, Episodes, Buttons, Immersive }
+enum class ShelfStyle { Tiles, Rows, Episodes, Buttons, Immersive, Grid }
 
 data class MusicItem(
     val layout: MusicLayout,
@@ -26,7 +26,9 @@ data class MusicItem(
     /** 0..100, when the item was started before (the red bar under the cover). */
     val progress: Int? = null,
     /** Icon name for round buttons (New releases, Charts, Moods & genres). */
-    val icon: String? = null
+    val icon: String? = null,
+    /** The first songs or episodes listed inside a big card (Bollywood Fire, a podcast show), when the server sends them. */
+    val tracks: List<MusicItem> = emptyList()
 ) {
     /** Stable key for lazy lists. */
     val key: String get() = (videoId ?: playlistId ?: browseId ?: title) + "|" + title.hashCode()
@@ -54,7 +56,9 @@ data class MusicShelf(
     val playAllVideoId: String?,
     val playAllPlaylistId: String?,
     /** What the server really sent for this shelf: used to match the screen to the real data. */
-    val debug: String
+    val debug: String,
+    /** The server's own size word for the cover tiles (COLLECTION_STYLE_ITEM_SIZE_...). */
+    val itemSize: String = ""
 )
 
 data class MusicHome(
