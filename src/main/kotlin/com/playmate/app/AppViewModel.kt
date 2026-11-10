@@ -18,6 +18,11 @@ import com.playmate.app.data.FeedPage
 import com.playmate.app.data.FeedRepo
 import com.playmate.app.data.InnerTube
 import com.playmate.app.data.Load
+import com.playmate.app.data.MusicChip
+import com.playmate.app.data.MusicClient
+import com.playmate.app.data.MusicItem
+import com.playmate.app.data.MusicShelf
+import com.playmate.app.data.asVideo
 import com.playmate.app.data.PlayableInfo
 import com.playmate.app.data.Playing
 import com.playmate.app.data.PlaylistOption
@@ -49,7 +54,7 @@ import com.playmate.app.ui.player.ActivePlayback
 import com.playmate.app.ui.player.PlaybackRecovery
 import com.playmate.app.ui.player.setVideoEnabled
 
-enum class Tab { Home, Search, Subscriptions, Downloads, You }
+enum class Tab { Home, Search, Subscriptions, Downloads, You, Music }
 
 /** The channel page on screen. [tab] indexes [ChannelInfo.tabs]; [startTab] is the one that came with the first answer. */
 data class ChannelState(
@@ -155,6 +160,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var shorts by mutableStateOf<ShortsLaunch?>(null); private set
     private var shortFocus: String? = null
 
+    // ---------------------------------------------------------------- YouTube Music
+
+    /** The shelves of the YouTube Music home, in the order YouTube Music sent them. */
+    var music by mutableStateOf<Load<List<MusicShelf>>>(Load.Loading); private set
+    var musicChips by mutableStateOf<List<MusicChip>>(emptyList()); private set
+    /** Index of the mood chip that is on (-1: the plain home). */
+    var musicChip by mutableStateOf(-1); private set
+    var musicRefreshing by mutableStateOf(false); private set
+    private var musicToken: String? = null
+    private var musicJob: Job? = null
+    private var loadingMoreMusic = false
+    private var musicGeneration = 0
+
     private var feedJob: Job? = null
     private var suggestJob: Job? = null
     private var lastSubmitted = ""
@@ -219,6 +237,99 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tab = target
         showNotifications = false
         closeChannel()
+        if (target == Tab.Music) loadMusic()
+    }
+
+    // ---------------------------------------------------------------- YouTube Music
+
+    /** Loads the Music home (or, with [force], looks again while the old shelves stay on screen). */
+    fun loadMusic(force: Boolean = false) {
+        if (!force && music is Load.Ready) return
+        musicJob?.cancel()
+        musicGeneration++
+        val generation = musicGeneration
+        val params = musicChips.getOrNull(musicChip)?.params
+        musicJob = viewModelScope.launch {
+            if (force) musicRefreshing = true else music = Load.Loading
+            attempt { MusicClient.home(params) }
+                .onSuccess { page ->
+                    if (generation != musicGeneration) return@onSuccess
+                    // The chip row belongs to the plain home; a mood page keeps the row it was opened from.
+                    if (musicChip < 0 && page.chips.isNotEmpty()) musicChips = page.chips
+                    musicToken = page.token
+                    music = if (page.shelves.isEmpty()) {
+                        Load.Failed("YouTube Music sent nothing to show. ${page.note.orEmpty()}".trim())
+                    } else Load.Ready(page.shelves)
+                }
+                .onFailure {
+                    if (generation != musicGeneration) return@onFailure
+                    if (!(force && music is Load.Ready)) music = Load.Failed(it.message ?: friendly(it))
+                }
+            if (generation == musicGeneration) musicRefreshing = false
+        }
+    }
+
+    /** Tap on a mood chip (Workout, Relax...): the home becomes that mood. Tapping it again goes back. */
+    fun selectMusicChip(index: Int) {
+        if (musicChips.getOrNull(index) == null) return
+        musicChip = if (index == musicChip) -1 else index
+        musicToken = null
+        music = Load.Loading
+        loadMusic(force = false)
+    }
+
+    fun loadMoreMusic() {
+        val token = musicToken ?: return
+        val current = (music as? Load.Ready)?.data ?: return
+        if (loadingMoreMusic) return
+        loadingMoreMusic = true
+        val generation = musicGeneration
+        viewModelScope.launch {
+            attempt { MusicClient.more(token) }
+                .onSuccess { page ->
+                    if (generation == musicGeneration) {
+                        val latest = (music as? Load.Ready)?.data ?: current
+                        val known = latest.map { it.debug }.toHashSet()
+                        music = Load.Ready(latest + page.shelves.filter { it.debug !in known })
+                        musicToken = page.token
+                    }
+                }
+                .onFailure { if (generation == musicGeneration) musicToken = null }
+            loadingMoreMusic = false
+        }
+    }
+
+    /** A song or video from the Music home plays in Playmate's own player. */
+    fun openMusic(item: MusicItem) {
+        val video = item.asVideo()
+        if (video != null) open(video)
+        else toast = "\"${item.title}\" opens in the next step"
+    }
+
+    /**
+     * What the server really sent for every shelf, as plain text to paste back to the developer:
+     * it is how the screen is matched to the real data.
+     */
+    fun musicReport(): String = buildString {
+        appendLine("Playmate Music report")
+        appendLine("signed in: ${Session.loggedIn}")
+        appendLine("chips: " + musicChips.joinToString { it.label })
+        val shelves = (music as? Load.Ready)?.data
+        if (shelves == null) {
+            appendLine("state: " + ((music as? Load.Failed)?.message ?: "loading"))
+            return@buildString
+        }
+        shelves.forEachIndexed { i, shelf ->
+            appendLine("${i + 1}. ${shelf.style} | ${shelf.debug}")
+            if (shelf.strapline != null) appendLine("   strapline: ${shelf.strapline}")
+            shelf.items.firstOrNull()?.let { item ->
+                appendLine(
+                    "   first: ${item.layout}/${item.kind} \"${item.title}\" | ${item.subtitle} | " +
+                        "video=${item.videoId} playlist=${item.playlistId} browse=${item.browseId} " +
+                        "dur=${item.duration} progress=${item.progress} explicit=${item.explicit}"
+                )
+            }
+        }
     }
 
     // ---------------------------------------------------------------- home feed
@@ -387,6 +498,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         notifications = Load.Loading
         history = Load.Loading
         feed = Load.Loading
+        resetMusic()
         loadFeed()
         // The video on screen: ask again, now that its like / subscribe state belongs to the account.
         playing?.let { p -> videoIdOf(p.seed.url)?.let { loadMeta(it, p.seed.url) } }
@@ -414,7 +526,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         subsFeed = Load.Loading
         subsToken = null
         feed = Load.Loading
+        resetMusic()
         loadFeed()
+    }
+
+    /** The account changed: the Music home belongs to the old one, so it is asked for again. */
+    private fun resetMusic() {
+        musicJob?.cancel()
+        musicGeneration++
+        music = Load.Loading
+        musicChips = emptyList()
+        musicChip = -1
+        musicToken = null
+        musicRefreshing = false
+        if (tab == Tab.Music) loadMusic()
     }
 
     private fun loadAccount() {
