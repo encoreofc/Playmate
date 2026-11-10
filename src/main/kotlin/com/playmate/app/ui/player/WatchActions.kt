@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import android.widget.Toast
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -50,6 +51,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
@@ -74,6 +76,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.Color
@@ -137,19 +140,19 @@ fun TitleBlock(
             .fillMaxWidth()
             .clickable(enabled = onOpen != null, onClick = { onOpen?.invoke() })
             .padding(horizontal = px720(24))
-            .padding(top = px720(22))
+            .padding(top = px720(20))
     ) {
         Text(
             title,
             style = MaterialTheme.typography.titleLarge.copy(
                 fontSize = pxSp720(40),
-                lineHeight = pxSp720(52),
+                lineHeight = pxSp720(56),
                 fontWeight = FontWeight.Bold
             ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Spacer(Modifier.height(px720(3)))
+        Spacer(Modifier.height(px720(4)))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 listOfNotNull(viewsText, ago).joinToString(" • "),
@@ -183,6 +186,12 @@ fun TitleBlock(
  * Channel avatar, name, subscribers and the subscribe button. Tapping the channel opens it.
  * [badge] puts the channel's badge after the name (the round seal for a verified channel, the
  * music note for an official artist channel); [ChannelBadge.None] shows nothing.
+ *
+ * Not subscribed, the end of the row is a red "Subscribe" pill. Subscribed, it is a grey
+ * "Subscribed" pill with a bell and a round chevron pill beside it; both open the Notifications
+ * menu (On, Off, Unsubscribe). [notificationsOn] is the bell's starting state and
+ * [onNotificationsChange] hears every change, so the caller can keep it; until it is wired, the
+ * choice only lives while the row is on screen.
  */
 @Composable
 fun ChannelRow(
@@ -190,18 +199,22 @@ fun ChannelRow(
     info: PlayableInfo?,
     meta: WatchMeta?,
     seedChannel: String,
-    badge: ChannelBadge = ChannelBadge.None
+    badge: ChannelBadge = ChannelBadge.None,
+    notificationsOn: Boolean = false,
+    onNotificationsChange: (Boolean) -> Unit = {}
 ) {
     val channelId = meta?.channelId ?: info?.channelId
     val name = meta?.channelName ?: info?.channel?.takeIf { it.isNotBlank() } ?: seedChannel
     val avatar = meta?.channelAvatar ?: info?.channelAvatar
     val subscribed = channelId?.let { vm.subscriptions[it] } ?: meta?.subscribed ?: false
+    val context = LocalContext.current
+    var notify by remember(channelId) { mutableStateOf(notificationsOn) }
 
     Row(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = px720(24))
-            .padding(top = px720(50), bottom = px720(44)),
+            .padding(top = px720(53), bottom = px720(44)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
@@ -251,7 +264,293 @@ fun ChannelRow(
                 }
             }
         }
-        SubscribeButton(subscribed = subscribed, onClick = { vm.toggleSubscribe(channelId, subscribed) })
+        SubscribeControl(
+            subscribed = subscribed,
+            channelName = name,
+            notificationsOn = notify,
+            onSubscribe = {
+                vm.toggleSubscribe(channelId, subscribed)
+                Toast.makeText(context, "Subscribed to $name", Toast.LENGTH_SHORT).show()
+            },
+            onUnsubscribe = {
+                vm.toggleSubscribe(channelId, subscribed)
+                notify = false
+                onNotificationsChange(false)
+                Toast.makeText(context, "Unsubscribed from $name", Toast.LENGTH_SHORT).show()
+            },
+            onNotificationsChange = {
+                notify = it
+                onNotificationsChange(it)
+            }
+        )
+    }
+}
+
+/** The red of the "Subscribe" pill. */
+private val SubscribeRed = Color(0xFFFF0000)
+
+/**
+ * The end of the channel row. Not subscribed: a red pill with white "Subscribe". Subscribed: two
+ * grey segments with a thin gap, like the like / dislike pair under it. The left one (bell and
+ * "Subscribed") is round at its left end, the right one (a chevron) is round at its right end; the
+ * inner corners are nearly square. Either segment opens the Notifications menu under it, lined up
+ * with the right margin, and the chevron segment stays darker while the menu is open. The bell is
+ * crossed out while notifications are off.
+ */
+@Composable
+private fun SubscribeControl(
+    subscribed: Boolean,
+    channelName: String,
+    notificationsOn: Boolean,
+    onSubscribe: () -> Unit,
+    onUnsubscribe: () -> Unit,
+    onNotificationsChange: (Boolean) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    if (!subscribed) {
+        Box(
+            Modifier
+                .height(px720(63))
+                .clip(CircleShape)
+                .background(SubscribeRed)
+                .clickable(onClick = onSubscribe)
+                .semantics {
+                    role = Role.Button
+                    contentDescription = "Subscribe to $channelName"
+                }
+                .padding(horizontal = px720(24)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "Subscribe",
+                style = TextStyle(
+                    fontSize = pxSp720(28),
+                    lineHeight = pxSp720(34),
+                    fontWeight = FontWeight.SemiBold
+                ),
+                color = Color.White,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    } else {
+        var open by remember { mutableStateOf(false) }
+        val full = px720(80) / 2
+        val edge = px720(10)
+        val leftShape = RoundedCornerShape(topStart = full, bottomStart = full, topEnd = edge, bottomEnd = edge)
+        val rightShape = RoundedCornerShape(topStart = edge, bottomStart = edge, topEnd = full, bottomEnd = full)
+        val bellState = if (notificationsOn) "notifications on" else "notifications off"
+
+        Box {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SplitSegment(
+                    shape = leftShape,
+                    description = "Subscribed to $channelName, $bellState",
+                    active = false,
+                    onClick = { open = true },
+                    padStart = px720(21),
+                    padEnd = px720(21)
+                ) {
+                    Icon(
+                        imageVector = if (notificationsOn) SolidIcons.Bell else SolidIcons.BellOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(px720(46)),
+                        tint = scheme.onSurface
+                    )
+                    Spacer(Modifier.width(px720(13)))
+                    Text(
+                        "Subscribed",
+                        style = TextStyle(
+                            fontSize = pxSp720(28),
+                            lineHeight = pxSp720(34),
+                            fontWeight = FontWeight.Medium
+                        ),
+                        color = scheme.onSurface,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+                Spacer(Modifier.width(px720(4)))
+                SplitSegment(
+                    shape = rightShape,
+                    description = "Notification settings",
+                    active = open,
+                    onClick = { open = true },
+                    padStart = 0.dp,
+                    padEnd = 0.dp,
+                    width = px720(96)
+                ) {
+                    Icon(
+                        imageVector = ActionIcons.ChevronDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(px720(48)),
+                        tint = scheme.onSurface
+                    )
+                }
+            }
+
+            DropdownMenu(
+                expanded = open,
+                onDismissRequest = { open = false },
+                offset = DpOffset(0.dp, px720(8)),
+                modifier = Modifier.width(px720(400)),
+                shape = RoundedCornerShape(px720(12)),
+                containerColor = cardFill()
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(px720(62))
+                        .padding(start = px720(32)),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Text(
+                        "Notifications",
+                        style = TextStyle(
+                            fontSize = pxSp720(26),
+                            lineHeight = pxSp720(32)
+                        ),
+                        color = scheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+                NotificationRow(icon = SolidIcons.BellActive, text = "On") {
+                    open = false
+                    onNotificationsChange(true)
+                }
+                NotificationRow(icon = SolidIcons.BellOff, text = "Off") {
+                    open = false
+                    onNotificationsChange(false)
+                }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(px720(2))
+                        .background(rowLine())
+                )
+                NotificationRow(icon = SolidIcons.PersonRemove, text = "Unsubscribe") {
+                    open = false
+                    onUnsubscribe()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One grey half of the Subscribed control, 80 pixels high. [width] fixes its width (the chevron
+ * half); otherwise it is as wide as its content plus [padStart] and [padEnd]. Pressed, or while
+ * the menu under it is open ([active]), a darker patch fades in over it.
+ */
+@Composable
+private fun SplitSegment(
+    shape: Shape,
+    description: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    padStart: Dp,
+    padEnd: Dp,
+    width: Dp? = null,
+    content: @Composable RowScope.() -> Unit
+) {
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val patch by animateColorAsState(
+        targetValue = if (pressed || active) Tonal.fillStrong() else Tonal.fillStrong().copy(alpha = 0f),
+        animationSpec = tween(120),
+        label = "segmentPatch"
+    )
+    Row(
+        Modifier
+            .then(if (width != null) Modifier.width(width) else Modifier)
+            .height(px720(80))
+            .clip(shape)
+            .background(cardFill())
+            .background(patch)
+            .clickable(interactionSource = source, indication = null, onClick = onClick)
+            .semantics {
+                role = Role.Button
+                contentDescription = description
+            }
+            .padding(start = padStart, end = padEnd),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+        content = content
+    )
+}
+
+/** One line of the Notifications menu: a solid glyph, then its name, 96 pixels high. */
+@Composable
+private fun NotificationRow(icon: ImageVector, text: String, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(px720(96))
+            .clickable(onClick = onClick)
+            .semantics { role = Role.Button }
+            .padding(start = px720(25), end = px720(25)),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(px720(46)),
+            tint = scheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(px720(25)))
+        Text(
+            text,
+            style = TextStyle(
+                fontSize = pxSp720(29),
+                lineHeight = pxSp720(36)
+            ),
+            color = scheme.onSurface,
+            maxLines = 1
+        )
+    }
+}
+
+/**
+ * The solid glyphs of the Subscribed control and its menu: a bell, a ringing bell, a crossed-out
+ * bell and a person with a minus. Drawn on a 24 grid and shown in a 46-pixel box.
+ */
+private object SolidIcons {
+    private fun solid(name: String, d: String): ImageVector =
+        ImageVector.Builder(
+            name = name,
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).addPath(
+            pathData = PathParser().parsePathString(d).toNodes(),
+            fill = SolidColor(Color.Black)
+        ).build()
+
+    val Bell: ImageVector by lazy {
+        solid(
+            "SolidBell",
+            "M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"
+        )
+    }
+    val BellActive: ImageVector by lazy {
+        solid(
+            "SolidBellActive",
+            "M7.58 4.08L6.15 2.65C3.75 4.48 2.17 7.3 2.01 10.5h2c.15-2.65 1.51-4.97 3.57-6.42zm12.41 6.42h2c-.15-3.2-1.73-6.02-4.13-7.85l-1.43 1.43c2.05 1.45 3.41 3.77 3.56 6.42zM18 11c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2v-5zm-6 11c.14 0 .27-.01.4-.04.65-.14 1.18-.58 1.44-1.18.1-.24.15-.5.15-.78h-4c.01 1.1.9 2 2.01 2z"
+        )
+    }
+    val BellOff: ImageVector by lazy {
+        solid(
+            "SolidBellOff",
+            "M20 18.69L7.84 6.14 5.27 3.49 4 4.76l2.8 2.8v.01c-.52.99-.8 2.16-.8 3.42v5l-2 2v1h13.73l2 2L21 19.72l-1-1.03zM12 22c1.11 0 2-.89 2-2h-4c0 1.11.89 2 2 2zm6-7.32V11c0-3.08-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68c-.15.03-.29.08-.42.12-.1.03-.2.07-.3.11h-.01c-.01 0-.01 0-.02.01-.23.09-.46.2-.68.31 0 0-.01 0-.01.01L18 14.68z"
+        )
+    }
+    val PersonRemove: ImageVector by lazy {
+        solid(
+            "SolidPersonRemove",
+            "M14 8c0-2.21-1.79-4-4-4S6 5.79 6 8s1.79 4 4 4 4-1.79 4-4zm3 6v-2h6v2h-6zm-7 1c-2.67 0-8 1.34-8 4v3h16v-3c0-2.66-5.33-4-8-4z"
+        )
     }
 }
 
@@ -504,6 +803,10 @@ private object ActionIcons {
             "M9.41 12.76 L14.59 15.54"
         )
     }
+    /** A plain chevron pointing down, for the round button beside "Subscribed". */
+    val ChevronDown: ImageVector by lazy {
+        thin("ThinChevronDown", 1.5f, "M6.5 9.3L12 14.8L17.5 9.3")
+    }
     val Note: ImageVector by lazy {
         thin(
             "ThinNote", 1.9f,
@@ -608,7 +911,7 @@ private fun RowScope.ActionTile(
 
     Row(
         Modifier
-            .height(px720(79))
+            .height(px720(80))
             .clip(CircleShape)
             .background(cardFill())
             .background(patch)
@@ -680,7 +983,7 @@ private fun ReactionPill(
     val haptic = LocalHapticFeedback.current
     val scheme = MaterialTheme.colorScheme
     val glyph = px720(46)
-    val full = px720(79) / 2
+    val full = px720(80) / 2
     val edge = px720(10)
     val likeShape = RoundedCornerShape(topStart = full, bottomStart = full, topEnd = edge, bottomEnd = edge)
     val dislikeShape = RoundedCornerShape(topStart = edge, bottomStart = edge, topEnd = full, bottomEnd = full)
@@ -691,7 +994,7 @@ private fun ReactionPill(
     )
 
     Row(
-        Modifier.height(px720(79)),
+        Modifier.height(px720(80)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
@@ -825,14 +1128,16 @@ private fun RowScope.DownloadTile(info: PlayableInfo?, onClick: () -> Unit) {
  * Each chip is a thin glyph with its name beside it. Play Audio is the one toggle (it is the
  * background-play switch): it looks like the others until it is switched on, then its glyph turns
  * yellow on a soft yellow chip. Popup is only drawn for now: it does nothing yet. The like /
- * dislike pair is hidden while the video is still loading.
+ * dislike pair is hidden while the video is still loading. [dislikeCount] is the number printed
+ * next to the dislike thumb; leave it null to show the thumb alone.
  */
 @Composable
 fun ActionRow(
     vm: AppViewModel,
     meta: WatchMeta?,
     onShare: () -> Unit,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    dislikeCount: String? = null
 ) {
     val info = (vm.playing?.info as? Load.Ready)?.data
     var phoneOpen by remember { mutableStateOf(false) }
@@ -857,7 +1162,8 @@ fun ActionRow(
                     reaction = vm.meta?.reaction ?: Reaction.None,
                     likeCount = vm.meta?.likeCount,
                     onLike = { vm.react(Reaction.Liked) },
-                    onDislike = { vm.react(Reaction.Disliked) }
+                    onDislike = { vm.react(Reaction.Disliked) },
+                    dislikeCount = dislikeCount
                 )
             }
             ActionTile(label = "Share", text = "Share", onClick = onShare) {
@@ -979,9 +1285,9 @@ fun CommentsCard(count: String?, preview: CommentItem?, state: Load<*>?, onClick
                     preview.text,
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontSize = pxSp720(26),
-                        lineHeight = pxSp720(34)
+                        lineHeight = pxSp720(32)
                     ),
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(start = px720(24))
                 )
