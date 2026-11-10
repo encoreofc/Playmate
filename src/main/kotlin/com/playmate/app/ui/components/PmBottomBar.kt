@@ -40,8 +40,8 @@ import coil.compose.AsyncImage
 import com.playmate.app.Tab
 
 /**
- * The bottom bar, laid out like the YouTube app: Home, Shorts, Subscriptions and You, each with
- * its label under a 24dp icon. Plain background, no glass, no middle button.
+ * The bottom bar, laid out like the YouTube app: Home, Shorts, Music, Subscriptions and You, each
+ * with its label under a 24dp icon. Plain background, no glass, no middle button.
  */
 @Composable
 fun PmBottomBar(
@@ -50,6 +50,7 @@ fun PmBottomBar(
     avatar: String?,
     onHome: () -> Unit,
     onShorts: () -> Unit,
+    onMusic: () -> Unit,
     onSubscriptions: () -> Unit,
     onYou: () -> Unit
 ) {
@@ -84,6 +85,9 @@ fun PmBottomBar(
             }
             BarItem(label = "Shorts", selected = false, onClick = onShorts) {
                 ShortsLogo(size = 24.dp, color = tint)
+            }
+            BarItem(label = "Music", selected = tab == Tab.Music, onClick = onMusic) {
+                MusicTabIcon(size = 24.dp, color = tint, filled = tab == Tab.Music)
             }
             BarItem(label = "Subscriptions", selected = tab == Tab.Subscriptions, onClick = onSubscriptions) {
                 Icon(
