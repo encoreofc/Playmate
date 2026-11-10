@@ -1,11 +1,17 @@
 package com.playmate.app.ui.search
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.speech.RecognizerIntent
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -26,6 +32,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -46,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -67,10 +77,10 @@ import com.playmate.app.Tab
 import com.playmate.app.data.Load
 import com.playmate.app.data.RecentSearch
 import com.playmate.app.ui.components.ErrorState
-import com.playmate.app.ui.components.PlaymateMark
 import com.playmate.app.ui.components.PmIcons
 import com.playmate.app.ui.components.SkeletonCard
 import com.playmate.app.ui.components.VideoCard
+import com.playmate.app.ui.theme.LocalPmDark
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 /** Keeps Bengali joined and uncut: no letter spacing, and a roomy line with nothing trimmed. */
@@ -82,8 +92,40 @@ private fun TextStyle.bangla() = copy(
 
 @Composable
 fun SearchScreen(vm: AppViewModel) {
+    val context = LocalContext.current
     val focus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+
+    // Google's own voice search window. What was said goes straight into a search.
+    val voiceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spoken = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.trim()
+                .orEmpty()
+            if (spoken.isNotEmpty()) {
+                vm.submit(spoken)
+                focusManager.clearFocus()
+            }
+        }
+    }
+    val startVoice = {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+        try {
+            voiceLauncher.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(context, "Voice search is not available on this phone", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (vm.editing) {
@@ -123,6 +165,7 @@ fun SearchScreen(vm: AppViewModel) {
                 vm.onQueryChange("")
                 focus.requestFocus()
             },
+            onVoice = startVoice,
             onFocused = vm::startEditing,
             focus = focus
         )
@@ -137,6 +180,11 @@ fun SearchScreen(vm: AppViewModel) {
     }
 }
 
+/**
+ * The search bar, copied from the reference (dp): a 56 high row, back arrow in a 48 button,
+ * a 252 wide grey pill 40 high with 16 of space before the text, and a black mic in a 48 button.
+ * The cursor is red.
+ */
 @Composable
 private fun SearchField(
     value: String,
@@ -144,34 +192,46 @@ private fun SearchField(
     onBack: () -> Unit,
     onSubmit: () -> Unit,
     onClear: () -> Unit,
+    onVoice: () -> Unit,
     onFocused: () -> Unit,
     focus: FocusRequester
 ) {
+    val dark = LocalPmDark.current
+    val boxColor = if (dark) Color(0xFF2B2B2B) else Color(0xFFE3E3E3)
+    val hintColor = if (dark) Color(0xFFAAAAAA) else Color(0xFF626262)
+    val ink = MaterialTheme.colorScheme.onBackground
+
     Row(
         Modifier
             .fillMaxWidth()
             .height(56.dp)
-            .padding(start = 4.dp, end = 12.dp),
+            .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onBack) {
-            Icon(PmIcons.Back, contentDescription = "Back", modifier = Modifier.size(24.dp))
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back",
+                tint = ink,
+                modifier = Modifier.size(24.dp)
+            )
         }
+        Spacer(Modifier.width(2.dp))
         Row(
             Modifier
                 .weight(1f)
                 .height(40.dp)
                 .clip(RoundedCornerShape(50))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .background(boxColor)
                 .padding(start = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(Modifier.weight(1f)) {
                 if (value.isEmpty()) {
                     Text(
-                        "Search Playmate",
+                        "Search videos, channels...",
                         style = MaterialTheme.typography.bodyLarge.bangla(),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = hintColor,
                         maxLines = 1
                     )
                 }
@@ -180,7 +240,7 @@ private fun SearchField(
                     onValueChange = onValueChange,
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.bangla().copy(color = MaterialTheme.colorScheme.onSurface),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(Color(0xFFFF0000)),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
                     modifier = Modifier
@@ -194,13 +254,22 @@ private fun SearchField(
                     Icon(
                         PmIcons.Close,
                         contentDescription = "Clear",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = hintColor,
                         modifier = Modifier.size(18.dp)
                     )
                 }
             } else {
                 Spacer(Modifier.width(16.dp))
             }
+        }
+        Spacer(Modifier.width(2.dp))
+        IconButton(onClick = onVoice) {
+            Icon(
+                Icons.Filled.Mic,
+                contentDescription = "Voice search",
+                tint = ink,
+                modifier = Modifier.size(24.dp)
+            )
         }
     }
 }
@@ -211,8 +280,9 @@ private fun Recents(vm: AppViewModel) {
     var removing by remember { mutableStateOf<RecentSearch?>(null) }
     var clearing by remember { mutableStateOf(false) }
 
+    // No saved searches: a plain empty page, like the reference (no logo, no extra text).
     if (vm.recents.isEmpty()) {
-        EmptySearch()
+        Box(Modifier.fillMaxSize())
         return
     }
 
@@ -320,25 +390,6 @@ private fun RecentRow(
                 modifier = Modifier.size(22.dp)
             )
         }
-    }
-}
-
-@Composable
-private fun EmptySearch() {
-    Column(
-        Modifier.fillMaxSize().padding(bottom = 120.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        PlaymateMark(width = 72.dp)
-        Spacer(Modifier.height(20.dp))
-        Text("Search Playmate", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Find something to watch",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 
