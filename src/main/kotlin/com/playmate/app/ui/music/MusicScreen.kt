@@ -190,7 +190,7 @@ fun MusicScreen(vm: AppViewModel) {
     val state = vm.music
     LaunchedEffect(state is Load.Ready) { if (state !is Load.Ready) headerOffset = 0f }
 
-    val glowUrls = (state as? Load.Ready)?.data?.firstOrNull()?.items?.take(3)
+    val glowUrls = (state as? Load.Ready)?.data?.firstOrNull()?.items?.take(4)
         ?.map { MusicImage.sized(it.thumb, 64) }.orEmpty()
     val glowColors = rememberArtColors(glowUrls)
     val currentUrl = vm.playing?.seed?.url
@@ -282,6 +282,7 @@ fun MusicScreen(vm: AppViewModel) {
                             ShelfView(
                                 shelf = shelf,
                                 first = index == 0,
+                                afterRows = index > 0 && state.data[index - 1].style == ShelfStyle.Rows,
                                 currentUrl = currentUrl,
                                 onOpen = ::openItem,
                                 onMenu = ::showMenu,
@@ -326,30 +327,32 @@ fun MusicScreen(vm: AppViewModel) {
 
 private fun DrawScope.drawGlow(colors: List<Color>) {
     val fallback = Color(0xFF3A3F4B)
-    val base = glow(colors.getOrNull(0) ?: fallback)
-    val left = glow(colors.getOrNull(1) ?: colors.getOrNull(0) ?: fallback)
-    val right = glow(colors.getOrNull(2) ?: colors.getOrNull(0) ?: fallback)
+    val tones = (if (colors.isEmpty()) listOf(fallback) else colors).map(::glow)
+    fun tone(i: Int) = tones[i % tones.size]
+    // A soft wash across the top, then one blob of colour per cover, spread over the width,
+    // so the glow is a mix of the covers (blue, purple, pink...) and not one flat colour.
     drawRect(
         Brush.verticalGradient(
-            0f to base.copy(alpha = 0.80f),
-            0.50f to base.copy(alpha = 0.34f),
+            0f to tone(0).copy(alpha = 0.55f),
+            0.55f to tone(1).copy(alpha = 0.22f),
             1f to Color.Transparent
         )
     )
-    drawRect(
-        Brush.radialGradient(
-            listOf(left.copy(alpha = 0.75f), Color.Transparent),
-            center = Offset(size.width * 0.12f, size.height * 0.30f),
-            radius = size.width * 0.85f
+    val w = size.width
+    val h = size.height
+    fun blob(color: Color, alpha: Float, x: Float, y: Float, radius: Float) {
+        drawRect(
+            Brush.radialGradient(
+                listOf(color.copy(alpha = alpha), Color.Transparent),
+                center = Offset(w * x, h * y),
+                radius = w * radius
+            )
         )
-    )
-    drawRect(
-        Brush.radialGradient(
-            listOf(right.copy(alpha = 0.60f), Color.Transparent),
-            center = Offset(size.width * 0.95f, size.height * 0.42f),
-            radius = size.width * 0.80f
-        )
-    )
+    }
+    blob(tone(0), 0.80f, 0.08f, 0.16f, 0.85f)
+    blob(tone(1), 0.62f, 0.55f, 0.08f, 0.70f)
+    blob(tone(2), 0.70f, 0.98f, 0.30f, 0.85f)
+    blob(tone(3), 0.45f, 0.22f, 0.58f, 0.75f)
 }
 
 /** A cover's average colour, lifted so it glows on black without going neon. */
@@ -461,7 +464,7 @@ private fun MusicHeader(
                 if (unread > 0) {
                     Box(
                         Modifier
-                            .offset(x = 8.dp, y = (-8).dp)
+                            .offset(x = 7.5.dp, y = (-4.5).dp)
                             .size(16.dp)
                             .clip(CircleShape)
                             .background(MBadgeRed),
@@ -513,7 +516,7 @@ private fun MusicHeader(
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(top = 12.dp, bottom = 12.dp)
+                modifier = Modifier.padding(top = 13.dp, bottom = 12.dp)
             ) {
                 itemsIndexed(chips, key = { i, chip -> "$i|${chip.label}" }) { index, chip ->
                     MoodChip(chip.label, selected = index == selected, dim = scrolled) { onChip(index) }
@@ -544,7 +547,7 @@ private fun MoodChip(label: String, selected: Boolean, dim: Boolean, onClick: ()
         Text(
             label,
             color = if (selected) MBlack else if (dim) Color(0xCCFFFFFF) else MWhite,
-            fontSize = 16.sp,
+            fontSize = 14.5.sp,
             maxLines = 1
         )
     }
@@ -556,16 +559,22 @@ private fun MoodChip(label: String, selected: Boolean, dim: Boolean, onClick: ()
 private fun ShelfView(
     shelf: MusicShelf,
     first: Boolean,
+    afterRows: Boolean,
     currentUrl: String?,
     onOpen: (MusicItem) -> Unit,
     onMenu: (MusicItem) -> Unit,
     onMore: (MusicShelf) -> Unit,
     onPlayAll: (MusicShelf) -> Unit
 ) {
-    Column(Modifier.padding(top = if (first) 12.dp else ShelfGap)) {
+    // Measured from YouTube Music: a row list keeps 8 dp of its own padding under the last row,
+    // and a shelf with a small line above its title (Speed dial) sits a little closer to the one above.
+    val lead = shelf.strapline != null || shelf.avatar != null
+    val top = if (first) 13.dp else (if (lead) 25.dp else ShelfGap) - (if (afterRows) 8.dp else 0.dp)
+    Column(Modifier.padding(top = top)) {
         if (shelf.title.isNotBlank()) {
             ShelfHeader(shelf, onMore = { onMore(shelf) }, onPlayAll = { onPlayAll(shelf) })
-            Spacer(Modifier.height(12.dp))
+            // The first row of a row list already has 8 dp of its own padding above it.
+            Spacer(Modifier.height(if (shelf.style == ShelfStyle.Rows) 4.dp else if (lead) 17.dp else 12.dp))
         }
         when (shelf.style) {
             ShelfStyle.Rows -> RowsShelf(shelf, currentUrl, onOpen, onMenu)
@@ -607,6 +616,7 @@ private fun ShelfHeader(shelf: MusicShelf, onMore: () -> Unit, onPlayAll: () -> 
                     it.uppercase(),
                     color = MGrey,
                     fontSize = 14.sp,
+                    lineHeight = 14.sp,
                     fontWeight = FontWeight.Light,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -878,8 +888,9 @@ private fun ProgressStrip(percent: Int, modifier: Modifier = Modifier) {
 
 @Composable
 private fun GridShelf(shelf: MusicShelf, onOpen: (MusicItem) -> Unit) {
-    val tile = (LocalConfiguration.current.screenWidthDp.dp - 32.dp - 8.dp) / 3
-    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    // YouTube Music's tiles are 105 dp on a 360 dp screen: 16 dp on the left, about 21 dp on the right.
+    val tile = (LocalConfiguration.current.screenWidthDp.dp - 45.dp) / 3
+    Column(Modifier.padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         shelf.items.take(6).chunked(3).forEach { line ->
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 line.forEach { item -> SpeedTile(item, tile) { onOpen(item) } }
@@ -914,32 +925,52 @@ private fun SpeedTile(item: MusicItem, size: Dp, onClick: () -> Unit) {
                 .height(size / 2)
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000))))
         )
-        Row(
+        // The red bar of a started item sits above the name, inside the tile, with round ends.
+        Column(
             Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .padding(start = 8.dp, end = 6.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(start = 8.dp, end = 6.dp, bottom = 2.dp)
         ) {
-            Text(
-                item.title,
-                color = MWhite,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            if (leads) {
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MWhite,
-                    modifier = Modifier.size(22.dp)
+            item.progress?.let { percent ->
+                Box(
+                    Modifier
+                        .padding(end = 2.dp)
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x66FFFFFF))
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(percent.coerceIn(0, 100) / 100f)
+                            .clip(CircleShape)
+                            .background(MProgressRed)
+                    )
+                }
+                Spacer(Modifier.height(3.5.dp))
+            }
+            Row(Modifier.fillMaxWidth().height(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    item.title,
+                    color = MWhite,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
+                if (leads) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MWhite,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
-        item.progress?.let { ProgressStrip(it, Modifier.align(Alignment.BottomStart)) }
     }
 }
 
