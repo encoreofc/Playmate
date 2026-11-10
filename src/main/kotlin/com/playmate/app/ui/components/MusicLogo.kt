@@ -14,7 +14,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextGeometricTransform
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,14 +70,18 @@ fun MusicMark(size: Dp, modifier: Modifier = Modifier) {
 fun MusicLogo(modifier: Modifier = Modifier, markSize: Dp = 26.dp) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         MusicMark(size = markSize)
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(4.dp))
+        // YouTube Music's word is narrower than the system font: about 47 dp wide with a 16 dp tall M.
         Text(
             "Music",
             color = Color.White,
-            fontSize = 24.sp,
-            lineHeight = 28.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.6).sp
+            style = TextStyle(
+                fontSize = 22.sp,
+                lineHeight = 28.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.2).sp,
+                textGeometricTransform = TextGeometricTransform(scaleX = 0.8f)
+            )
         )
     }
 }
