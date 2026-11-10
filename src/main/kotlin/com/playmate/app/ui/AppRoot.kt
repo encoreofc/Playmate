@@ -26,6 +26,7 @@ import com.playmate.app.ui.components.MiniPlayer
 import com.playmate.app.ui.components.PmBottomBar
 import com.playmate.app.ui.downloads.DownloadsScreen
 import com.playmate.app.ui.home.HomeScreen
+import com.playmate.app.ui.music.MusicScreen
 import com.playmate.app.ui.notifications.NotificationsScreen
 import com.playmate.app.ui.player.PlayerScreen
 import com.playmate.app.ui.search.SearchScreen
@@ -58,9 +59,9 @@ fun AppRoot(vm: AppViewModel) {
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
-            // Home and Subscriptions pad for the status bar themselves; letting Scaffold add it too doubled the gap at the top.
+            // Home, Subscriptions and Music pad for the status bar themselves; letting Scaffold add it too doubled the gap at the top.
             // Other screens keep exactly what they had.
-            contentWindowInsets = if ((vm.tab == Tab.Home || vm.tab == Tab.Subscriptions || vm.showNotifications) && vm.channel == null) WindowInsets(0, 0, 0, 0)
+            contentWindowInsets = if ((vm.tab == Tab.Home || vm.tab == Tab.Subscriptions || vm.tab == Tab.Music || vm.showNotifications) && vm.channel == null) WindowInsets(0, 0, 0, 0)
             else ScaffoldDefaults.contentWindowInsets,
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
@@ -87,6 +88,7 @@ fun AppRoot(vm: AppViewModel) {
                                 vm.openShorts(shorts, 0)
                             }
                         },
+                        onMusic = { vm.select(Tab.Music) },
                         onSubscriptions = { vm.select(Tab.Subscriptions) },
                         onYou = { vm.select(Tab.You) }
                     )
@@ -105,6 +107,7 @@ fun AppRoot(vm: AppViewModel) {
                         Tab.Subscriptions -> SubscriptionsScreen(vm)
                         Tab.Downloads -> DownloadsScreen(vm)
                         Tab.You -> YouScreen(vm)
+                        Tab.Music -> MusicScreen(vm)
                     }
                 }
             }
