@@ -112,12 +112,13 @@ internal object MusicParser {
             val item = raw.optJSONObject(i) ?: continue
             val kind = item.keys().asSequence().firstOrNull() ?: continue
             seen[kind] = (seen[kind] ?: 0) + 1
-            parseItem(item)?.let { items += it }
+            parseItem(item, key == "musicImmersiveCarouselShelfRenderer")?.let { items += it }
         }
         if (items.isEmpty()) return null
 
         val perColumn = shelf.optString("numItemsPerColumn").toIntOrNull()?.coerceAtLeast(1) ?: 1
         val style = when {
+            title.equals("Speed dial", ignoreCase = true) && items.all { it.layout == MusicLayout.Tile } -> ShelfStyle.Grid
             key == "musicImmersiveCarouselShelfRenderer" -> ShelfStyle.Immersive
             items.all { it.layout == MusicLayout.Button } -> ShelfStyle.Buttons
             items.first().layout == MusicLayout.Episode -> ShelfStyle.Episodes
@@ -145,18 +146,52 @@ internal object MusicParser {
             moreParams = more?.optString("params")?.takeIf { it.isNotBlank() },
             playAllVideoId = playAll?.videoId,
             playAllPlaylistId = playAll?.playlistId,
-            debug = debug
+            debug = debug,
+            itemSize = shelf.optString("itemSize")
         )
     }
 
     // ---------------------------------------------------------------- items
 
-    private fun parseItem(element: JSONObject): MusicItem? {
-        element.optJSONObject("musicTwoRowItemRenderer")?.let { return tile(it) }
+    private fun parseItem(element: JSONObject, cards: Boolean): MusicItem? {
+        element.optJSONObject("musicTwoRowItemRenderer")?.let { r ->
+            val base = tile(r) ?: return null
+            return if (cards) base.copy(tracks = nestedTracks(element, null)) else base
+        }
         element.optJSONObject("musicResponsiveListItemRenderer")?.let { return row(it) }
-        element.optJSONObject("musicMultiRowListItemRenderer")?.let { return episode(it) }
+        element.optJSONObject("musicMultiRowListItemRenderer")?.let { r ->
+            val ep = episode(r) ?: return null
+            return ep.copy(tracks = nestedTracks(element, r))
+        }
         element.optJSONObject("musicNavigationButtonRenderer")?.let { return button(it) }
         return null
+    }
+
+    /** Songs or episodes sitting inside a big card, read exactly as the server lists them (at most 3). */
+    private fun nestedTracks(element: JSONObject, self: JSONObject?): List<MusicItem> {
+        val out = mutableListOf<MusicItem>()
+        collectTracks(element, self, out)
+        return out
+    }
+
+    private fun collectTracks(node: Any?, self: JSONObject?, out: MutableList<MusicItem>) {
+        if (out.size >= 3) return
+        when (node) {
+            is JSONObject -> for (key in node.keys()) {
+                val child = node.opt(key)
+                if (child === self) continue
+                when {
+                    key == "musicResponsiveListItemRenderer" && child is JSONObject -> row(child)?.let { out += it }
+                    key == "musicMultiRowListItemRenderer" && child is JSONObject -> episode(child)?.let { out += it }
+                    else -> collectTracks(child, self, out)
+                }
+                if (out.size >= 3) return
+            }
+            is JSONArray -> for (i in 0 until node.length()) {
+                collectTracks(node.opt(i), self, out)
+                if (out.size >= 3) return
+            }
+        }
     }
 
     /** A cover tile: album, playlist, mix, artist, video, podcast. */
